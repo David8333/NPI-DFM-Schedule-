@@ -1,0 +1,6 @@
+{
+  "name": "NPI 專案管理排程追控系統",
+  "description": "硬體研發與試產（PROTO/EVT/DVT/MP）專案排程追控系統，支援預計與實際雙軌甘特圖、自動工作天計算與高擬真 Excel (.xlsx) 報表匯出。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
