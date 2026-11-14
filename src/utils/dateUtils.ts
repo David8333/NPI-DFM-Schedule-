@@ -138,6 +138,20 @@ export function buildHolidayMap(holidays: HolidayItem[]): Map<string, HolidayIte
   return map;
 }
 
+export function isWorkingCalendarDay(
+  day: Pick<CalendarDay, 'dateStr' | 'isWeekend'>,
+  holidayMap: Map<string, HolidayItem>
+): boolean {
+  const entry = holidayMap.get(day.dateStr);
+  if (entry) {
+    if (entry.type === 'makeup_workday') return true;
+    if (entry.type === 'holiday' || entry.type === 'factory_off') return false;
+    // 'event' (展覽/活動) does not make a weekday a holiday
+    return !day.isWeekend;
+  }
+  return !day.isWeekend;
+}
+
 export function getEffectivePlannedDates(
   task: ScheduleTask,
   holidayMap: Map<string, HolidayItem>
@@ -148,7 +162,7 @@ export function getEffectivePlannedDates(
   }
   const days = generateCalendarDays(task.plannedStart, task.plannedEnd);
   for (const d of days) {
-    if (!d.isWeekend && !holidayMap.has(d.dateStr)) {
+    if (isWorkingCalendarDay(d, holidayMap)) {
       dates.add(d.dateStr);
     }
   }
@@ -172,7 +186,7 @@ export function getEffectiveActualDates(
       if (ov === 'pause') continue;
       if (ov === 'work' || ov === 'delay' || ov === 'pilot') {
         countedDates.add(d.dateStr);
-      } else if (!d.isWeekend && !holidayMap.has(d.dateStr)) {
+      } else if (isWorkingCalendarDay(d, holidayMap)) {
         countedDates.add(d.dateStr);
       }
     }
@@ -269,7 +283,7 @@ export function getActualCellState(
   if (task.actualStart > task.actualEnd) return 'empty';
   if (day.dateStr < task.actualStart || day.dateStr > task.actualEnd) return 'empty';
 
-  if (day.isWeekend || holidayMap.has(day.dateStr)) {
+  if (!isWorkingCalendarDay(day, holidayMap)) {
     return 'non_working_span';
   }
 

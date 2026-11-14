@@ -1,4 +1,4 @@
-import ExcelJS from 'exceljs';
+import type ExcelJS from 'exceljs';
 import { ExportOptions, HolidayItem, ProjectModel } from '../types/schedule';
 import {
   buildHolidayMap,
@@ -13,6 +13,7 @@ import {
   getTaskCategory,
   groupDaysByMonth,
   isTaskDelayedOrWarning,
+  isWorkingCalendarDay,
 } from './dateUtils';
 
 const THIN_BORDER_CLASSIC: Partial<ExcelJS.Borders> = {
@@ -35,7 +36,10 @@ export async function exportScheduleToExcel(
   options: ExportOptions,
   referenceToday: string
 ): Promise<void> {
-  const workbook = new ExcelJS.Workbook();
+  const excelModule = await import('exceljs');
+  const ExcelJSRuntime =
+    excelModule.default ?? (excelModule as unknown as typeof ExcelJS);
+  const workbook = new ExcelJSRuntime.Workbook();
   workbook.creator = 'NPI 專案管理排程追控系統';
   workbook.created = new Date();
 
@@ -135,11 +139,21 @@ export async function exportScheduleToExcel(
     const cell = sheet.getCell(2, colNum);
     cell.value = day.day;
 
-    const isHoliday = holidayMap.has(day.dateStr);
+    const calEntry = holidayMap.get(day.dateStr);
+    const isSpecial = Boolean(calEntry);
     let fillArgb = 'FFFFFFFF';
     let textArgb = 'FF111827';
 
-    if (isHoliday) {
+    if (calEntry?.type === 'makeup_workday') {
+      fillArgb = 'FF5EEAD4';
+      textArgb = 'FF134E4A';
+    } else if (calEntry?.type === 'event') {
+      fillArgb = 'FFA5B4FC';
+      textArgb = 'FF1E1B4B';
+    } else if (calEntry?.type === 'factory_off') {
+      fillArgb = 'FFFDBA74';
+      textArgb = 'FF7C2D12';
+    } else if (calEntry?.type === 'holiday') {
       fillArgb = isClassic ? 'FFFFFF00' : 'FFFEF3C7';
       textArgb = 'FF92400E';
     } else if (day.isWeekend) {
@@ -150,7 +164,7 @@ export async function exportScheduleToExcel(
     }
 
     cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillArgb } };
-    cell.font = { name: 'Calibri', size: 9, bold: isHoliday, color: { argb: textArgb } };
+    cell.font = { name: 'Calibri', size: 9, bold: isSpecial, color: { argb: textArgb } };
     cell.alignment = { vertical: 'middle', horizontal: 'center' };
     cell.border = baseBorder;
   });
@@ -406,6 +420,19 @@ export async function exportScheduleToExcel(
         // Planned Cell Styling: 試產 = Bright Purple (#A855F7), DFM/Other = Orange (#F59E0B)
         const pSeg = getPlannedCellState(day.dateStr, task);
         pCell.border = { ...baseBorder };
+        const calEntry = holidayMap.get(day.dateStr);
+        const isWorking = isWorkingCalendarDay(day, holidayMap);
+        const emptyColumnTint =
+          calEntry?.type === 'makeup_workday'
+            ? 'FFF0FDFA'
+            : calEntry?.type === 'event'
+            ? 'FFEEF2FF'
+            : calEntry?.type === 'factory_off'
+            ? 'FFFFF7ED'
+            : !isWorking
+            ? 'FFFAFAFA'
+            : null;
+
         if (pSeg === 'single' || pSeg === 'start' || pSeg === 'end') {
           pCell.fill = {
             type: 'pattern',
@@ -429,8 +456,8 @@ export async function exportScheduleToExcel(
             top: { style: 'medium', color: { argb: isPilotTask ? 'FF9333EA' : 'FFF59E0B' } },
             bottom: { style: 'medium', color: { argb: isPilotTask ? 'FF9333EA' : 'FFF59E0B' } },
           };
-        } else if (day.isWeekend || holidayMap.has(day.dateStr)) {
-          pCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAFA' } };
+        } else if (emptyColumnTint) {
+          pCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: emptyColumnTint } };
         }
 
         // Actual Cell Styling: Water Blue (#38BDF8), Green (#16E016 / #10B981), Red (#F40058 / #F43F5E), Gray (#D1D5DB)
@@ -456,8 +483,8 @@ export async function exportScheduleToExcel(
           };
         } else if (aState === 'non_working_span' || aState === 'pause') {
           aCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD1D5DB' } };
-        } else if (day.isWeekend || holidayMap.has(day.dateStr)) {
-          aCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFAFAFA' } };
+        } else if (emptyColumnTint) {
+          aCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: emptyColumnTint } };
         }
       });
 

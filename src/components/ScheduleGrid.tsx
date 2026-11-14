@@ -340,7 +340,19 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
           </span>
           <span className="inline-flex items-center gap-1.5">
             <span className={`inline-block w-3.5 h-2.5 border border-slate-300 ${classicColors ? 'bg-[#ffff00]' : 'bg-amber-200'}`} />
-            <span>廠休 / 假日</span>
+            <span>國定假日</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-3.5 h-2.5 border border-orange-400 bg-orange-300" />
+            <span>廠休 / 盤點</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-3.5 h-2.5 border border-teal-500 bg-teal-300" />
+            <span>調班工作天</span>
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block w-3.5 h-2.5 border border-indigo-400 bg-indigo-300" />
+            <span>展覽 / 活動</span>
           </span>
         </div>
 
@@ -486,10 +498,21 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                   calendarDays[idx + 1].month !== day.month;
 
                 let dayBg = 'bg-white text-slate-700 hover:bg-slate-100';
-                if (holiday) {
+                let typeLabel = '';
+                if (holiday?.type === 'makeup_workday') {
+                  dayBg = 'bg-teal-300 text-teal-950 font-bold';
+                  typeLabel = '調班工作天';
+                } else if (holiday?.type === 'event') {
+                  dayBg = 'bg-indigo-300 text-indigo-950 font-bold';
+                  typeLabel = '展覽/活動';
+                } else if (holiday?.type === 'factory_off') {
+                  dayBg = 'bg-orange-300 text-orange-950 font-bold';
+                  typeLabel = '廠休/盤點';
+                } else if (holiday?.type === 'holiday') {
                   dayBg = classicColors
                     ? 'bg-[#ffff00] text-slate-950 font-bold'
                     : 'bg-amber-200 text-amber-950 font-bold';
+                  typeLabel = '國定假日';
                 } else if (day.isWeekend) {
                   dayBg = classicColors
                     ? 'bg-[#e9b8ff] text-purple-950 font-medium'
@@ -503,15 +526,15 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                     onMouseEnter={() =>
                       setHoverDateInfo(
                         `${day.dateStr} (週${['日', '一', '二', '三', '四', '五', '六'][day.dayOfWeek]})${
-                          holiday ? ` · ${holiday.name}` : ''
-                        } — 點擊標題可設為廠休/假日`
+                          holiday ? ` · [${typeLabel}] ${holiday.name}` : ''
+                        } — 點擊標題可快速切換廠休/調班`
                       )
                     }
                     onMouseLeave={() => setHoverDateInfo(null)}
                     title={
                       holiday
-                        ? `${day.dateStr} ${holiday.name}（點擊移除假日）`
-                        : `${day.dateStr}（點擊切換為廠休/國定假日）`
+                        ? `${day.dateStr} [${typeLabel}] ${holiday.name}（點擊切換/移除）`
+                        : `${day.dateStr}（點擊切換為廠休或調班工作天）`
                     }
                     className={`sticky top-8 z-30 w-[26px] min-w-[26px] max-w-[26px] border-b ${
                       isMonthEnd ? 'border-r-slate-400' : 'border-r-slate-200'
@@ -790,7 +813,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                       {/* GANTT CELLS: PLANNED ROW */}
                       {calendarDays.map((day, idx) => {
                         const seg = getPlannedCellState(day.dateStr, task);
-                        const isHoliday = holidayMap.has(day.dateStr);
+                        const calEntry = holidayMap.get(day.dateStr);
                         const isMonthEnd =
                           idx === calendarDays.length - 1 ||
                           calendarDays[idx + 1].month !== day.month;
@@ -812,7 +835,13 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                           cellClass = isPilotTask
                             ? 'bg-[#a855f7]/50 border-y-2 border-y-[#9333ea]'
                             : 'bg-amber-400/50 border-y-2 border-y-amber-500';
-                        } else if (isHoliday) {
+                        } else if (calEntry?.type === 'makeup_workday') {
+                          cellClass = 'bg-teal-50/60 hover:bg-teal-100/50';
+                        } else if (calEntry?.type === 'event') {
+                          cellClass = 'bg-indigo-50/60 hover:bg-indigo-100/50';
+                        } else if (calEntry?.type === 'factory_off') {
+                          cellClass = 'bg-orange-50/50 hover:bg-orange-100/50';
+                        } else if (calEntry?.type === 'holiday') {
                           cellClass = 'bg-amber-50/35 hover:bg-amber-100/50';
                         } else if (day.isWeekend) {
                           cellClass = 'bg-slate-50/70 hover:bg-slate-100';
@@ -935,7 +964,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                       {/* GANTT CELLS: ACTUAL ROW */}
                       {calendarDays.map((day, idx) => {
                         const aState = getActualCellState(day, task, holidayMap);
-                        const isHoliday = holidayMap.has(day.dateStr);
+                        const calEntry = holidayMap.get(day.dateStr);
                         const isMonthEnd =
                           idx === calendarDays.length - 1 ||
                           calendarDays[idx + 1].month !== day.month;
@@ -966,7 +995,13 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                           cellBg = 'bg-slate-300/90';
                         } else if (aState === 'pause') {
                           cellBg = 'bg-slate-100';
-                        } else if (isHoliday) {
+                        } else if (calEntry?.type === 'makeup_workday') {
+                          cellBg = 'bg-teal-50/60 hover:bg-teal-100/50';
+                        } else if (calEntry?.type === 'event') {
+                          cellBg = 'bg-indigo-50/60 hover:bg-indigo-100/50';
+                        } else if (calEntry?.type === 'factory_off') {
+                          cellBg = 'bg-orange-50/50 hover:bg-orange-100/50';
+                        } else if (calEntry?.type === 'holiday') {
                           cellBg = 'bg-amber-50/35 hover:bg-sky-50';
                         } else if (day.isWeekend) {
                           cellBg = 'bg-slate-50/70 hover:bg-sky-50';

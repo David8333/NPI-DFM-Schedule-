@@ -23,6 +23,10 @@ import {
   INITIAL_PROJECTS,
 } from './data/initialData';
 import {
+  mergeTaiwanHolidays2023To2033,
+  TAIWAN_HOLIDAY_YEARS,
+} from './data/taiwanHolidays';
+import {
   buildHolidayMap,
   computeActualWorkingDays,
   computePlannedWorkingDays,
@@ -41,6 +45,14 @@ type ActiveTab = 'schedule' | 'analytics' | 'holidays' | 'export';
 
 const STORAGE_KEY_PROJECTS = 'npi_schedule_projects_v2';
 const STORAGE_KEY_HOLIDAYS = 'npi_schedule_holidays_v2';
+const STORAGE_KEY_TW_SEED = 'npi_tw_holidays_seeded_2023_2033_v1';
+const STORAGE_KEY_FACTORY_CLEANUP = 'npi_clear_sample_factory_off_v1';
+
+const LEGACY_SAMPLE_FACTORY_OFF = new Set([
+  '2026-08-07|廠區盤點調整日',
+  '2026-08-10|產線歲修保養(一)',
+  '2026-08-11|產線歲修保養(二)',
+]);
 
 const normalizeProjects = (list: unknown[]): ProjectModel[] => {
   return list.map((item) => {
@@ -86,10 +98,27 @@ export default function App() {
   const [holidays, setHolidays] = useState<HolidayItem[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_HOLIDAYS);
+      const alreadySeeded = localStorage.getItem(STORAGE_KEY_TW_SEED) === '1';
+      const cleanedSample = localStorage.getItem(STORAGE_KEY_FACTORY_CLEANUP) === '1';
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
+        if (Array.isArray(parsed)) {
+          let list: HolidayItem[] = parsed;
+          if (!alreadySeeded) {
+            localStorage.setItem(STORAGE_KEY_TW_SEED, '1');
+            list = mergeTaiwanHolidays2023To2033(list);
+          }
+          if (!cleanedSample) {
+            localStorage.setItem(STORAGE_KEY_FACTORY_CLEANUP, '1');
+            list = list.filter(
+              (h) => !LEGACY_SAMPLE_FACTORY_OFF.has(`${h.date}|${h.name}`)
+            );
+          }
+          return list;
+        }
       }
+      localStorage.setItem(STORAGE_KEY_TW_SEED, '1');
+      localStorage.setItem(STORAGE_KEY_FACTORY_CLEANUP, '1');
     } catch {
       // ignore storage errors
     }
@@ -375,17 +404,42 @@ export default function App() {
   };
 
   const handleToggleHolidayDate = (dateStr: string) => {
-    const exists = holidays.some((h) => h.date === dateStr);
-    if (exists) {
-      setHolidays((prev) => prev.filter((h) => h.date !== dateStr));
-      showToast(`已取消 ${dateStr} 廠休/假日設定`);
-    } else {
-      setHolidays((prev) => [
-        ...prev,
-        { date: dateStr, name: '廠休 / 不計工時日', type: 'factory_off' },
-      ]);
-      showToast(`已將 ${dateStr} 標記為廠休假日，自動重算工作天`);
+    const existing = holidays.find((h) => h.date === dateStr);
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dow = new Date(y, m - 1, d).getDay();
+    const isWeekend = dow === 0 || dow === 6;
+
+    if (!existing) {
+      if (isWeekend) {
+        setHolidays((prev) => [
+          ...prev,
+          { date: dateStr, name: '調班補上班日', type: 'makeup_workday' },
+        ]);
+        showToast(`已將週末 ${dateStr} 設為調班工作天（計入工作天）`);
+      } else {
+        setHolidays((prev) => [
+          ...prev,
+          { date: dateStr, name: '廠休 / 盤點日', type: 'factory_off' },
+        ]);
+        showToast(`已將 ${dateStr} 標記為廠休 / 盤點日（自動扣除工作天）`);
+      }
+      return;
     }
+
+    if (existing.type === 'holiday') {
+      setHolidays((prev) =>
+        prev.map((h) =>
+          h.date === dateStr
+            ? { date: dateStr, name: `${existing.name}調班上班`, type: 'makeup_workday' }
+            : h
+        )
+      );
+      showToast(`已將 ${dateStr} 轉為調班工作天（計入工作天）`);
+      return;
+    }
+
+    setHolidays((prev) => prev.filter((h) => h.date !== dateStr));
+    showToast(`已移除 ${dateStr}（${existing.name}）標記`);
   };
 
   const handleTriggerExcelExport = async (options: ExportOptions) => {
@@ -666,7 +720,7 @@ export default function App() {
                     className="px-2 py-1 text-xs font-mono font-semibold bg-white border border-slate-200 rounded text-slate-800"
                     aria-label="選擇日曆年份"
                   >
-                    {[2024, 2025, 2026, 2027, 2028, 2029, 2030].map((yr) => (
+                    {TAIWAN_HOLIDAY_YEARS.map((yr) => (
                       <option key={yr} value={yr}>
                         {yr}年
                       </option>
@@ -876,6 +930,10 @@ export default function App() {
             onRemoveHoliday={(dateStr) => {
               setHolidays((prev) => prev.filter((h) => h.date !== dateStr));
               showToast(`已移除假日 ${dateStr}`);
+            }}
+            onSyncTaiwanHolidays={() => {
+              setHolidays((prev) => mergeTaiwanHolidays2023To2033(prev));
+              showToast('已自動補齊台灣 2023–2033 年國定假日與補休日');
             }}
           />
         )}

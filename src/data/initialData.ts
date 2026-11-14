@@ -1,14 +1,9 @@
 import { HolidayItem, ProjectModel } from '../types/schedule';
+import { TAIWAN_OFFICIAL_HOLIDAYS_2023_2033 } from './taiwanHolidays';
 
 export const DEFAULT_REFERENCE_TODAY = '2026-11-13';
 
-export const INITIAL_HOLIDAYS: HolidayItem[] = [
-  { date: '2026-08-07', name: '廠區盤點調整日', type: 'factory_off' },
-  { date: '2026-08-10', name: '產線歲修保養(一)', type: 'factory_off' },
-  { date: '2026-08-11', name: '產線歲修保養(二)', type: 'factory_off' },
-  { date: '2026-09-25', name: '中秋節國定假日', type: 'holiday' },
-  { date: '2026-10-09', name: '國慶日彈性補假', type: 'holiday' },
-];
+export const INITIAL_HOLIDAYS: HolidayItem[] = TAIWAN_OFFICIAL_HOLIDAYS_2023_2033;
 
 export const INITIAL_PROJECTS: ProjectModel[] = [
   {

@@ -42,10 +42,16 @@ export interface ProjectModel {
   tasks: ScheduleTask[];
 }
 
+export type CalendarDayEntryType =
+  | 'holiday'
+  | 'factory_off'
+  | 'makeup_workday'
+  | 'event';
+
 export interface HolidayItem {
   date: string; // YYYY-MM-DD
   name: string;
-  type: 'holiday' | 'factory_off';
+  type: CalendarDayEntryType;
 }
 
 export type ExcelThemeMode = 'classic_npi' | 'modern_corp';
