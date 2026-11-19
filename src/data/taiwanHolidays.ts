@@ -334,15 +334,13 @@ export const TAIWAN_OFFICIAL_HOLIDAYS_2023_2033: HolidayItem[] = [
 
 /**
  * Merge Taiwan 2023–2033 national & compensatory holidays into an existing holiday list
- * without overwriting user-configured factory_off or custom items on the same dates.
+ * strictly appending only dates not yet present in `existing`, so manually added
+ * factory_off, makeup_workday, event, or custom holiday items are never overwritten.
  */
 export function mergeTaiwanHolidays2023To2033(existing: HolidayItem[]): HolidayItem[] {
-  const byDate = new Map<string, HolidayItem>();
-  for (const h of TAIWAN_OFFICIAL_HOLIDAYS_2023_2033) {
-    byDate.set(h.date, h);
-  }
-  for (const h of existing) {
-    byDate.set(h.date, h);
-  }
-  return Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  const existingDates = new Set(existing.map((h) => h.date.trim()));
+  const additions = TAIWAN_OFFICIAL_HOLIDAYS_2023_2033.filter(
+    (tw) => !existingDates.has(tw.date.trim())
+  );
+  return [...existing, ...additions].sort((a, b) => a.date.localeCompare(b.date));
 }

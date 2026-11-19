@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Download,
   Plus,
@@ -7,6 +7,7 @@ import {
   Palette,
   Check,
   CalendarRange,
+  Undo2,
 } from 'lucide-react';
 import {
   DailyOverrideType,
@@ -32,6 +33,17 @@ import {
   computePlannedWorkingDays,
   isTaskDelayedOrWarning,
 } from './utils/dateUtils';
+import {
+  loadPersistedHolidays,
+  loadPersistedProjects,
+  requestPersistentStorage,
+  savePersistedHolidays,
+  savePersistedProjects,
+  STORAGE_KEY_FACTORY_CLEANUP,
+  STORAGE_KEY_HOLIDAYS,
+  STORAGE_KEY_PROJECTS,
+  STORAGE_KEY_TW_SEED,
+} from './utils/storage';
 import { exportScheduleToExcel } from './utils/excelExport';
 import { GanttClickMode, ScheduleGrid } from './components/ScheduleGrid';
 import { TaskEditModal } from './components/TaskEditModal';
@@ -42,11 +54,6 @@ import { ExportBackupView } from './components/ExportBackupView';
 import { WeeklyDfmStatsPanel } from './components/WeeklyDfmStatsPanel';
 
 type ActiveTab = 'schedule' | 'analytics' | 'holidays' | 'export';
-
-const STORAGE_KEY_PROJECTS = 'npi_schedule_projects_v2';
-const STORAGE_KEY_HOLIDAYS = 'npi_schedule_holidays_v2';
-const STORAGE_KEY_TW_SEED = 'npi_tw_holidays_seeded_2023_2033_v1';
-const STORAGE_KEY_FACTORY_CLEANUP = 'npi_clear_sample_factory_off_v1';
 
 const LEGACY_SAMPLE_FACTORY_OFF = new Set([
   '2026-08-07|廠區盤點調整日',
@@ -80,6 +87,11 @@ const normalizeProjects = (list: unknown[]): ProjectModel[] => {
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('schedule');
 
+  const hasHydratedIdbRef = useRef(false);
+  const hasUserMutatedProjectsRef = useRef(false);
+  const hasUserMutatedHolidaysRef = useRef(false);
+  const lastDragUndoRef = useRef(0);
+
   const [projects, setProjects] = useState<ProjectModel[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_PROJECTS);
@@ -90,7 +102,7 @@ export default function App() {
         }
       }
     } catch {
-      // ignore storage errors
+      // ignore storage errors; IndexedDB hydration runs on mount
     }
     return INITIAL_PROJECTS;
   });
@@ -120,26 +132,47 @@ export default function App() {
       localStorage.setItem(STORAGE_KEY_TW_SEED, '1');
       localStorage.setItem(STORAGE_KEY_FACTORY_CLEANUP, '1');
     } catch {
-      // ignore storage errors
+      // ignore storage errors; IndexedDB hydration runs on mount
     }
     return INITIAL_HOLIDAYS;
   });
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_PROJECTS, JSON.stringify(projects));
-    } catch {
-      // ignore quota errors
-    }
-  }, [projects]);
+  const [undoStack, setUndoStack] = useState<ProjectModel[][]>([]);
 
+  // Hydrate from high-capacity IndexedDB & request persistent storage protection
   useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY_HOLIDAYS, JSON.stringify(holidays));
-    } catch {
-      // ignore quota errors
-    }
-  }, [holidays]);
+    let cancelled = false;
+    (async () => {
+      await requestPersistentStorage();
+      const [idbProjects, idbHolidays] = await Promise.all([
+        loadPersistedProjects(),
+        loadPersistedHolidays(),
+      ]);
+      if (cancelled) return;
+
+      if (!hasUserMutatedProjectsRef.current && Array.isArray(idbProjects) && idbProjects.length > 0) {
+        setProjects(normalizeProjects(idbProjects));
+      }
+      if (!hasUserMutatedHolidaysRef.current && Array.isArray(idbHolidays) && idbHolidays.length > 0) {
+        const alreadySeeded = localStorage.getItem(STORAGE_KEY_TW_SEED) === '1';
+        let list = idbHolidays;
+        if (!alreadySeeded) {
+          try {
+            localStorage.setItem(STORAGE_KEY_TW_SEED, '1');
+          } catch {
+            // ignore
+          }
+          list = mergeTaiwanHolidays2023To2033(list);
+        }
+        setHolidays(list);
+      }
+
+      hasHydratedIdbRef.current = true;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Filters & View Controls
   const [searchQuery, setSearchQuery] = useState('');
@@ -149,7 +182,9 @@ export default function App() {
   const [endDate, setEndDate] = useState('2026-09-30');
   const [calendarYear, setCalendarYear] = useState(2026);
   const [referenceToday, setReferenceToday] = useState(DEFAULT_REFERENCE_TODAY);
-  const [ganttClickMode, setGanttClickMode] = useState<GanttClickMode>('auto_paint');
+  const [ganttClickMode, setGanttClickMode] = useState<GanttClickMode>('inspect');
+  const [isScheduleEditable, setIsScheduleEditable] = useState(true);
+  const [isFullscreenSchedule, setIsFullscreenSchedule] = useState(false);
   const [compactSticky, setCompactSticky] = useState(false);
   const [classicColors, setClassicColors] = useState(true);
   const [showInlineWeeklyDfm, setShowInlineWeeklyDfm] = useState(false);
@@ -166,12 +201,113 @@ export default function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isQuickExporting, setIsQuickExporting] = useState(false);
 
-  const showToast = (msg: string) => {
+  const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
     setTimeout(() => {
       setToastMessage((prev) => (prev === msg ? null : prev));
-    }, 3200);
-  };
+    }, 3400);
+  }, []);
+
+  // Save projects to IndexedDB (primary large-capacity store) + localStorage (fast cache)
+  useEffect(() => {
+    if (!hasHydratedIdbRef.current && !hasUserMutatedProjectsRef.current) return;
+    let active = true;
+    savePersistedProjects(projects).then(({ idbSaved, localSaved }) => {
+      if (active && !idbSaved && !localSaved) {
+        showToast('警告：瀏覽器本機儲存空間已滿或遭阻擋，請立即匯出 JSON 備份！');
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [projects, showToast]);
+
+  // Save holidays to IndexedDB + localStorage
+  useEffect(() => {
+    if (!hasHydratedIdbRef.current && !hasUserMutatedHolidaysRef.current) return;
+    let active = true;
+    savePersistedHolidays(holidays).then(({ idbSaved, localSaved }) => {
+      if (active && !idbSaved && !localSaved) {
+        showToast('警告：假日資料未能寫入本機儲存空間，請檢查瀏覽器權限');
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, [holidays, showToast]);
+
+  const mutateProjects = useCallback(
+    (
+      updater: (prev: ProjectModel[]) => ProjectModel[],
+      options?: { recordUndo?: boolean; groupDragUndo?: boolean }
+    ) => {
+      hasUserMutatedProjectsRef.current = true;
+      const shouldRecord = options?.recordUndo !== false;
+      setProjects((prev) => {
+        const next = updater(prev);
+        if (next === prev) return prev;
+        if (shouldRecord) {
+          const now = Date.now();
+          const shouldPush = options?.groupDragUndo
+            ? now - lastDragUndoRef.current > 650
+            : true;
+          if (shouldPush) {
+            if (options?.groupDragUndo) {
+              lastDragUndoRef.current = now;
+            }
+            setUndoStack((stack) => [...stack.slice(-29), prev]);
+          }
+        }
+        return next;
+      });
+    },
+    []
+  );
+
+  const mutateHolidays = useCallback(
+    (updater: (prev: HolidayItem[]) => HolidayItem[]) => {
+      hasUserMutatedHolidaysRef.current = true;
+      setHolidays(updater);
+    },
+    []
+  );
+
+  const handleUndo = useCallback(() => {
+    if (!isScheduleEditable) {
+      showToast('目前為唯讀鎖定狀態，請先解鎖編輯後再復原');
+      return;
+    }
+    setUndoStack((stack) => {
+      if (stack.length === 0) return stack;
+      const previous = stack[stack.length - 1];
+      hasUserMutatedProjectsRef.current = true;
+      setProjects(previous);
+      showToast('已復原上一步排程異動');
+      return stack.slice(0, -1);
+    });
+  }, [isScheduleEditable, showToast]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !e.shiftKey) {
+        const target = e.target as HTMLElement | null;
+        if (
+          target &&
+          (target.tagName === 'INPUT' ||
+            target.tagName === 'TEXTAREA' ||
+            target.tagName === 'SELECT')
+        ) {
+          return;
+        }
+        if (undoStack.length > 0 && isScheduleEditable) {
+          e.preventDefault();
+          handleUndo();
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [handleUndo, undoStack.length, isScheduleEditable]);
 
   // Filtered projects & tasks
   const filteredProjects = useMemo(() => {
@@ -242,7 +378,7 @@ export default function App() {
   }, [filteredProjects, holidays, referenceToday]);
 
   const handleToggleTaskCompleted = (projectId: string, taskId: string) => {
-    setProjects((prev) =>
+    mutateProjects((prev) =>
       prev.map((p) => {
         if (p.id !== projectId) return p;
         return {
@@ -257,7 +393,7 @@ export default function App() {
 
   const handleCycleTaskStatus = (projectId: string, taskId: string) => {
     const order: TaskStatus[] = ['O', 'C', 'NA'];
-    setProjects((prev) =>
+    mutateProjects((prev) =>
       prev.map((p) => {
         if (p.id !== projectId) return p;
         return {
@@ -273,7 +409,7 @@ export default function App() {
   };
 
   const handleSaveTask = (projectId: string, updatedTask: ScheduleTask) => {
-    setProjects((prev) =>
+    mutateProjects((prev) =>
       prev.map((p) => {
         if (p.id !== projectId) return p;
         const exists = p.tasks.some((t) => t.id === updatedTask.id);
@@ -289,7 +425,7 @@ export default function App() {
   };
 
   const handleDeleteTask = (projectId: string, taskId: string) => {
-    setProjects((prev) =>
+    mutateProjects((prev) =>
       prev.map((p) => {
         if (p.id !== projectId) return p;
         return {
@@ -322,7 +458,7 @@ export default function App() {
   };
 
   const handleSaveProject = (project: ProjectModel, isNew: boolean) => {
-    setProjects((prev) => {
+    mutateProjects((prev) => {
       if (isNew) {
         return [...prev, project].sort((a, b) => a.seqNo - b.seqNo);
       }
@@ -330,16 +466,52 @@ export default function App() {
         .map((p) => (p.id === project.id ? project : p))
         .sort((a, b) => a.seqNo - b.seqNo);
     });
-    showToast(
-      isNew
-        ? `已新增機種「${project.modelName}」`
-        : `已更新機種「${project.modelName}」與任務清單`
-    );
+
+    // Prevent newly added/saved projects from looking "lost" due to active filters
+    let resetFiltersNotice = false;
+    if (stageFilter !== 'ALL' && !project.tasks.some((t) => t.stage === stageFilter)) {
+      setStageFilter('ALL');
+      resetFiltersNotice = true;
+    }
+    if (statusFilter !== 'ALL' && !project.tasks.some((t) => t.status === statusFilter)) {
+      setStatusFilter('ALL');
+      resetFiltersNotice = true;
+    }
+    const q = searchQuery.trim().toLowerCase();
+    if (q) {
+      const matchesProj =
+        project.modelName.toLowerCase().includes(q) ||
+        (project.modelSubtitle?.toLowerCase().includes(q) ?? false) ||
+        (project.customer?.toLowerCase().includes(q) ?? false) ||
+        (project.ee?.toLowerCase().includes(q) ?? false) ||
+        (project.me?.toLowerCase().includes(q) ?? false) ||
+        String(project.seqNo).includes(q) ||
+        project.tasks.some(
+          (t) =>
+            t.taskName.toLowerCase().includes(q) ||
+            t.pilotNote.toLowerCase().includes(q) ||
+            (t.owner?.toLowerCase().includes(q) ?? false)
+        );
+      if (!matchesProj) {
+        setSearchQuery('');
+        resetFiltersNotice = true;
+      }
+    }
+
+    if (isNew) {
+      showToast(
+        resetFiltersNotice
+          ? `已新增機種「${project.modelName}」（已自動重設篩選條件以立即顯示新機種）`
+          : `已新增機種「${project.modelName}」並寫入大容量資料庫`
+      );
+    } else {
+      showToast(`已更新機種「${project.modelName}」與任務清單`);
+    }
   };
 
   const handleDeleteProject = (projectId: string) => {
-    setProjects((prev) => prev.filter((p) => p.id !== projectId));
-    showToast('已刪除機種專案');
+    mutateProjects((prev) => prev.filter((p) => p.id !== projectId));
+    showToast('已刪除機種專案（可按復原上一步還原）');
   };
 
   const handleUpdateTaskDates = (
@@ -349,7 +521,7 @@ export default function App() {
     start: string,
     end: string
   ) => {
-    setProjects((prev) =>
+    mutateProjects((prev) =>
       prev.map((p) => {
         if (p.id !== projectId) return p;
         return {
@@ -374,32 +546,34 @@ export default function App() {
     dateStr: string,
     value: DailyOverrideType | 'clear'
   ) => {
-    setProjects((prev) =>
-      prev.map((p) => {
-        if (p.id !== projectId) return p;
-        return {
-          ...p,
-          tasks: p.tasks.map((t) => {
-            if (t.id !== taskId) return t;
-            const nextMap = { ...(t.dailyOverrides || {}) };
-            const insideActualRange =
-              Boolean(t.actualStart && t.actualEnd) &&
-              dateStr >= t.actualStart &&
-              dateStr <= t.actualEnd;
+    mutateProjects(
+      (prev) =>
+        prev.map((p) => {
+          if (p.id !== projectId) return p;
+          return {
+            ...p,
+            tasks: p.tasks.map((t) => {
+              if (t.id !== taskId) return t;
+              const nextMap = { ...(t.dailyOverrides || {}) };
+              const insideActualRange =
+                Boolean(t.actualStart && t.actualEnd) &&
+                dateStr >= t.actualStart &&
+                dateStr <= t.actualEnd;
 
-            if (value === 'clear') {
-              if (insideActualRange) {
-                nextMap[dateStr] = 'pause';
+              if (value === 'clear') {
+                if (insideActualRange) {
+                  nextMap[dateStr] = 'pause';
+                } else {
+                  delete nextMap[dateStr];
+                }
               } else {
-                delete nextMap[dateStr];
+                nextMap[dateStr] = value;
               }
-            } else {
-              nextMap[dateStr] = value;
-            }
-            return { ...t, dailyOverrides: nextMap };
-          }),
-        };
-      })
+              return { ...t, dailyOverrides: nextMap };
+            }),
+          };
+        }),
+      { recordUndo: true, groupDragUndo: true }
     );
   };
 
@@ -411,13 +585,13 @@ export default function App() {
 
     if (!existing) {
       if (isWeekend) {
-        setHolidays((prev) => [
+        mutateHolidays((prev) => [
           ...prev,
           { date: dateStr, name: '調班補上班日', type: 'makeup_workday' },
         ]);
         showToast(`已將週末 ${dateStr} 設為調班工作天（計入工作天）`);
       } else {
-        setHolidays((prev) => [
+        mutateHolidays((prev) => [
           ...prev,
           { date: dateStr, name: '廠休 / 盤點日', type: 'factory_off' },
         ]);
@@ -427,7 +601,7 @@ export default function App() {
     }
 
     if (existing.type === 'holiday') {
-      setHolidays((prev) =>
+      mutateHolidays((prev) =>
         prev.map((h) =>
           h.date === dateStr
             ? { date: dateStr, name: `${existing.name}調班上班`, type: 'makeup_workday' }
@@ -438,7 +612,7 @@ export default function App() {
       return;
     }
 
-    setHolidays((prev) => prev.filter((h) => h.date !== dateStr));
+    mutateHolidays((prev) => prev.filter((h) => h.date !== dateStr));
     showToast(`已移除 ${dateStr}（${existing.name}）標記`);
   };
 
@@ -595,8 +769,11 @@ export default function App() {
               {showInlineWeeklyDfm ? '收合每週 DFM 統計' : '查看每週 DFM 統計'}
             </button>
 
-            <div className="flex items-center gap-1.5">
-              <label htmlFor="ref-today" className="whitespace-nowrap">
+            <div
+              className="flex items-center gap-1.5"
+              title="追控基準日功能：1. 甘特圖日曆加上藍色基準框；2. 預計開始日已過卻未填入實際開始日會以紅底標示警示；3. 計算上方 KPI 與統計報表的延遲/超支預警清單"
+            >
+              <label htmlFor="ref-today" className="whitespace-nowrap cursor-help">
                 追控基準日：
               </label>
               <input
@@ -819,6 +996,11 @@ export default function App() {
                   {(
                     [
                       {
+                        id: 'inspect',
+                        label: '安全點選 (防誤觸)',
+                        dot: null,
+                      },
+                      {
                         id: 'auto_paint',
                         label: '智慧塗色 (自動)',
                         dot: null,
@@ -853,18 +1035,14 @@ export default function App() {
                         label: '兩點設預計區間',
                         dot: null,
                       },
-                      {
-                        id: 'inspect',
-                        label: '點格開編輯視窗',
-                        dot: null,
-                      },
                     ] as { id: GanttClickMode; label: string; dot: string | null }[]
                   ).map((mode) => (
                     <button
                       key={mode.id}
                       type="button"
+                      disabled={!isScheduleEditable}
                       onClick={() => setGanttClickMode(mode.id)}
-                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors whitespace-nowrap shrink-0 ${
+                      className={`inline-flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-md border transition-colors whitespace-nowrap shrink-0 disabled:opacity-45 ${
                         ganttClickMode === mode.id
                           ? 'bg-slate-900 text-white border-slate-900'
                           : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
@@ -877,6 +1055,18 @@ export default function App() {
                     </button>
                   ))}
                 </div>
+
+                {undoStack.length > 0 && isScheduleEditable && (
+                  <button
+                    type="button"
+                    onClick={handleUndo}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-300 hover:bg-slate-100 rounded-md transition-colors whitespace-nowrap shrink-0"
+                    title="復原上一步排程異動 (Ctrl+Z)"
+                  >
+                    <Undo2 className="w-3.5 h-3.5" />
+                    復原上一步 ({undoStack.length})
+                  </button>
+                )}
               </div>
             </div>
 
@@ -890,6 +1080,24 @@ export default function App() {
               ganttClickMode={ganttClickMode}
               compactSticky={compactSticky}
               classicColors={classicColors}
+              isEditable={isScheduleEditable}
+              isFullscreen={isFullscreenSchedule}
+              canUndo={undoStack.length > 0}
+              onToggleEditable={() => {
+                setIsScheduleEditable((prev) => {
+                  const next = !prev;
+                  showToast(
+                    next
+                      ? '已切換為「可編輯狀態」（已啟用防誤覆蓋保護）'
+                      : '已切換為「唯讀鎖定 (不可編輯)」狀態'
+                  );
+                  return next;
+                });
+              }}
+              onToggleFullscreen={() => setIsFullscreenSchedule((prev) => !prev)}
+              onChangeClickMode={setGanttClickMode}
+              onUndo={handleUndo}
+              onProtectedNotice={showToast}
               onToggleTaskCompleted={handleToggleTaskCompleted}
               onCycleTaskStatus={handleCycleTaskStatus}
               onEditProject={(proj) => setProjectModalState({ open: true, project: proj })}
@@ -921,19 +1129,25 @@ export default function App() {
           <HolidayCalendarView
             holidays={holidays}
             onAddHoliday={(item) => {
-              setHolidays((prev) => [
+              mutateHolidays((prev) => [
                 ...prev.filter((h) => h.date !== item.date),
                 item,
               ]);
-              showToast(`已新增假日 ${item.date} (${item.name})`);
+              showToast(`已新增行事曆標記 ${item.date} (${item.name})`);
             }}
             onRemoveHoliday={(dateStr) => {
-              setHolidays((prev) => prev.filter((h) => h.date !== dateStr));
-              showToast(`已移除假日 ${dateStr}`);
+              mutateHolidays((prev) => prev.filter((h) => h.date !== dateStr));
+              showToast(`已移除行事曆項目 ${dateStr}`);
             }}
             onSyncTaiwanHolidays={() => {
-              setHolidays((prev) => mergeTaiwanHolidays2023To2033(prev));
-              showToast('已自動補齊台灣 2023–2033 年國定假日與補休日');
+              const merged = mergeTaiwanHolidays2023To2033(holidays);
+              const addedCount = merged.length - holidays.length;
+              mutateHolidays(() => merged);
+              showToast(
+                addedCount > 0
+                  ? `已補齊 ${addedCount} 筆台灣 2023–2033 國定假日（已完整保留所有手動新增與調班項目）`
+                  : '台灣 2023–2033 國定假日皆已齊全，未覆蓋任何手動項目'
+              );
             }}
           />
         )}
@@ -948,12 +1162,12 @@ export default function App() {
             defaultEndDate={endDate}
             onTriggerExcelExport={handleTriggerExcelExport}
             onImportBackupData={(importedProjects, importedHolidays) => {
-              setProjects(normalizeProjects(importedProjects));
-              if (importedHolidays) setHolidays(importedHolidays);
+              mutateProjects(() => normalizeProjects(importedProjects));
+              if (importedHolidays) mutateHolidays(() => importedHolidays);
             }}
             onResetDefaultData={() => {
-              setProjects(INITIAL_PROJECTS);
-              setHolidays(INITIAL_HOLIDAYS);
+              mutateProjects(() => INITIAL_PROJECTS);
+              mutateHolidays(() => INITIAL_HOLIDAYS);
             }}
           />
         )}

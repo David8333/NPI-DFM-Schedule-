@@ -298,6 +298,10 @@ export function getActualCellState(
     return 'delay';
   }
 
+  if (getTaskCategory(task) === 'dfm') {
+    return 'delay';
+  }
+
   return 'on_time';
 }
 

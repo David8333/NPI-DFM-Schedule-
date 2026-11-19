@@ -1,11 +1,16 @@
-import React, { useRef, useState } from 'react';
-import { Download, FileSpreadsheet, Upload, RotateCcw, Check } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { Download, FileSpreadsheet, Upload, RotateCcw, Check, HardDrive } from 'lucide-react';
 import {
   ExcelThemeMode,
   ExportOptions,
   HolidayItem,
   ProjectModel,
 } from '../types/schedule';
+import {
+  formatBytesHuman,
+  getStorageDiagnostics,
+  StorageDiagnostics,
+} from '../utils/storage';
 
 interface ExportBackupViewProps {
   allProjects: ProjectModel[];
@@ -38,8 +43,19 @@ export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
   const [isExporting, setIsExporting] = useState(false);
   const [feedbackMsg, setFeedbackMsg] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [storageDiag, setStorageDiag] = useState<StorageDiagnostics | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    getStorageDiagnostics(allProjects, holidays).then((diag) => {
+      if (active) setStorageDiag(diag);
+    });
+    return () => {
+      active = false;
+    };
+  }, [allProjects, holidays]);
 
   const handleExcelSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -303,8 +319,40 @@ export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
         <div>
           <h3 className="text-base font-bold text-slate-900">資料備份與還原</h3>
           <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-            所有排程修改皆自動儲存於瀏覽器本機。您亦可匯出 JSON 專案快照供團隊成員載入續編。
+            所有排程與假日設定皆自動存於大容量本機資料庫（IndexedDB，突破傳統 5MB 限制）。您亦可匯出 JSON 專案快照供團隊成員載入續編。
           </p>
+          {storageDiag && (
+            <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg space-y-1.5 text-[11px] text-slate-600 font-mono tabular-nums">
+              <div className="flex items-center justify-between font-sans">
+                <span className="inline-flex items-center gap-1.5 font-semibold text-slate-800">
+                  <HardDrive className="w-3.5 h-3.5 text-emerald-700" />
+                  {storageDiag.backend}
+                </span>
+                <span
+                  className={
+                    storageDiag.persisted ? 'text-emerald-700 font-semibold' : 'text-slate-500'
+                  }
+                >
+                  {storageDiag.persisted ? '已啟用防清除保護' : '標準本機保存'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between">
+                <span>專案資料體積：</span>
+                <span className="text-slate-900 font-semibold">
+                  {formatBytesHuman(storageDiag.projectsSizeBytes)} ({allProjects.length} 款機種)
+                </span>
+              </div>
+              {storageDiag.quotaBytes !== null && (
+                <div className="flex items-center justify-between">
+                  <span>瀏覽器可用空間：</span>
+                  <span className="text-slate-900 font-semibold">
+                    已用 {formatBytesHuman(storageDiag.usageBytes)} / 上限{' '}
+                    {formatBytesHuman(storageDiag.quotaBytes)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="space-y-3">
