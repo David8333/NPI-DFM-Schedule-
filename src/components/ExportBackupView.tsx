@@ -11,7 +11,11 @@ import {
   getStorageDiagnostics,
   StorageDiagnostics,
 } from '../utils/storage';
-import { getThisWeekRange } from '../utils/dateUtils';
+import {
+  getLastWeekRange,
+  getThisMonthRange,
+  getThisWeekRange,
+} from '../utils/dateUtils';
 
 interface ExportBackupViewProps {
   allProjects: ProjectModel[];
@@ -175,9 +179,13 @@ export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
               <div className="flex flex-wrap gap-1.5">
                 {(() => {
                   const yr = Number(startDate.slice(0, 4)) || new Date().getFullYear();
+                  const lastWeek = getLastWeekRange();
                   const thisWeek = getThisWeekRange();
+                  const thisMonth = getThisMonthRange();
                   return [
+                    { label: '上週', s: lastWeek.start, e: lastWeek.end },
                     { label: '本週', s: thisWeek.start, e: thisWeek.end },
+                    { label: '本月', s: thisMonth.start, e: thisMonth.end },
                     { label: 'Q1', s: `${yr}-01-01`, e: `${yr}-03-31` },
                     { label: 'Q2', s: `${yr}-04-01`, e: `${yr}-06-30` },
                     { label: 'Q3', s: `${yr}-07-01`, e: `${yr}-09-30` },

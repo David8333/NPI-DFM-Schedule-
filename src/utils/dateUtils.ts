@@ -101,6 +101,35 @@ export function getThisWeekRange(baseDate: Date = new Date()): {
   };
 }
 
+export function getLastWeekRange(baseDate: Date = new Date()): {
+  start: string;
+  end: string;
+  year: number;
+} {
+  const sevenDaysAgo = new Date(
+    baseDate.getFullYear(),
+    baseDate.getMonth(),
+    baseDate.getDate() - 7
+  );
+  return getThisWeekRange(sevenDaysAgo);
+}
+
+export function getThisMonthRange(baseDate: Date = new Date()): {
+  start: string;
+  end: string;
+  year: number;
+} {
+  const year = baseDate.getFullYear();
+  const monthIdx = baseDate.getMonth();
+  const startDate = new Date(year, monthIdx, 1);
+  const endDate = new Date(year, monthIdx + 1, 0);
+  return {
+    start: formatDateISO(startDate),
+    end: formatDateISO(endDate),
+    year,
+  };
+}
+
 export function generateCalendarDays(startDateStr: string, endDateStr: string): CalendarDay[] {
   const start = parseLocalDate(startDateStr);
   const end = parseLocalDate(endDateStr);

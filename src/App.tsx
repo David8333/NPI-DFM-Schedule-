@@ -31,6 +31,8 @@ import {
   computeActualWorkingDaysInRange,
   computePlannedWorkingDaysInRange,
   computeTaskPcbQtyInRange,
+  getLastWeekRange,
+  getThisMonthRange,
   getThisWeekRange,
   getTodayISO,
   isTaskDelayedOrWarning,
@@ -969,9 +971,13 @@ export default function App() {
                   </select>
                   <div className="flex flex-wrap items-center gap-1 p-0.5 bg-slate-100 rounded-md">
                     {(() => {
+                      const lastWeek = getLastWeekRange();
                       const thisWeek = getThisWeekRange();
+                      const thisMonth = getThisMonthRange();
                       return [
+                        { label: '上週', s: lastWeek.start, e: lastWeek.end, yearOverride: lastWeek.year },
                         { label: '本週', s: thisWeek.start, e: thisWeek.end, yearOverride: thisWeek.year },
+                        { label: '本月', s: thisMonth.start, e: thisMonth.end, yearOverride: thisMonth.year },
                         { label: 'Q1', s: `${calendarYear}-01-01`, e: `${calendarYear}-03-31` },
                         { label: 'Q2', s: `${calendarYear}-04-01`, e: `${calendarYear}-06-30` },
                         { label: 'Q3', s: `${calendarYear}-07-01`, e: `${calendarYear}-09-30` },
