@@ -4,7 +4,10 @@ import { HolidayItem, ProjectModel, ProjectStage, ScheduleTask } from '../types/
 import {
   buildHolidayMap,
   computeActualWorkingDays,
+  computeActualWorkingDaysInRange,
   computePlannedWorkingDays,
+  computePlannedWorkingDaysInRange,
+  computeTaskPcbQtyInRange,
   getEffectiveActualRangeDisplay,
   isTaskDelayedOrWarning,
 } from '../utils/dateUtils';
@@ -74,18 +77,19 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         }
         if (t.status === 'O') openStatusTasks++;
 
-        const pDays = computePlannedWorkingDays(t, holidayMap);
-        const aDays = computeActualWorkingDays(t, holidayMap);
+        const pDays = computePlannedWorkingDaysInRange(t, holidayMap, startDate, endDate);
+        const aDays = computeActualWorkingDaysInRange(t, holidayMap, startDate, endDate);
+        const fullPlannedDays = computePlannedWorkingDays(t, holidayMap);
+        const fullActualDays = computeActualWorkingDays(t, holidayMap);
         const effRange = getEffectiveActualRangeDisplay(t);
         totalPlannedDays += pDays;
         totalActualDays += aDays;
         mPlan += pDays;
         mActual += aDays;
 
-        if (t.pcbMode === 'qty') {
-          totalPlannedPcb += t.plannedQty ?? 0;
-          totalActualPcb += t.actualQty ?? 0;
-        }
+        const pcbInRange = computeTaskPcbQtyInRange(t, holidayMap, startDate, endDate);
+        totalPlannedPcb += pcbInRange.plannedPcb;
+        totalActualPcb += pcbInRange.actualPcb;
 
         const st = stageStats[t.stage] || stageStats.OTHER;
         st.total++;
@@ -98,8 +102,8 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
           warnings.push({
             project: proj,
             task: t,
-            plannedDays: pDays,
-            actualDays: aDays,
+            plannedDays: fullPlannedDays,
+            actualDays: fullActualDays,
             actualStartDisp: effRange.start,
             actualEndDisp: effRange.end,
             reason: w.reason,
@@ -133,7 +137,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       modelSummaries,
       maxModelDays,
     };
-  }, [projects, holidayMap, referenceToday]);
+  }, [projects, holidayMap, referenceToday, startDate, endDate]);
 
   const completionPct =
     stats.totalTasks > 0 ? Math.round((stats.completedTasks / stats.totalTasks) * 100) : 0;
@@ -170,8 +174,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             <span className="text-emerald-700">{stats.totalActualDays}</span>
           </p>
           <p className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-            差額 {stats.totalActualDays - stats.totalPlannedDays >= 0 ? '+' : ''}
-            {stats.totalActualDays - stats.totalPlannedDays} 工作天
+            區間 {startDate} ~ {endDate} · 差額{' '}
+            {stats.totalActualDays - stats.totalPlannedDays >= 0 ? '+' : ''}
+            {stats.totalActualDays - stats.totalPlannedDays} 天
           </p>
         </div>
 
@@ -181,7 +186,9 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
             {stats.totalActualPcb}{' '}
             <span className="text-sm font-normal text-slate-400">/ {stats.totalPlannedPcb}</span>
           </p>
-          <p className="mt-1 text-xs text-slate-500">實際審結板數 / 預計送審總板數</p>
+          <p className="mt-1 text-xs text-slate-500">
+            區間內實際審結 / 預計送審總板數
+          </p>
         </div>
       </div>
 

@@ -82,6 +82,25 @@ export function isWeekendDate(dateStr: string): boolean {
   return dow === 0 || dow === 6;
 }
 
+export function getTodayISO(): string {
+  return formatDateISO(new Date());
+}
+
+export function getThisWeekRange(baseDate: Date = new Date()): {
+  start: string;
+  end: string;
+  year: number;
+} {
+  const todayStr = formatDateISO(baseDate);
+  const start = getMondayOfWeek(todayStr);
+  const end = getSundayOfWeek(start);
+  return {
+    start,
+    end,
+    year: Number(start.slice(0, 4)) || baseDate.getFullYear(),
+  };
+}
+
 export function generateCalendarDays(startDateStr: string, endDateStr: string): CalendarDay[] {
   const start = parseLocalDate(startDateStr);
   const end = parseLocalDate(endDateStr);
@@ -90,7 +109,7 @@ export function generateCalendarDays(startDateStr: string, endDateStr: string): 
   const result: CalendarDay[] = [];
   const cursor = new Date(start.getFullYear(), start.getMonth(), start.getDate());
   let safety = 0;
-  while (cursor <= end && safety < 500) {
+  while (cursor <= end && safety < 800) {
     const year = cursor.getFullYear();
     const month = cursor.getMonth() + 1;
     const day = cursor.getDate();
@@ -246,6 +265,110 @@ export function computeActualWorkingDays(
     return task.manualActualDays ?? 0;
   }
   return getEffectiveActualDates(task, holidayMap).size;
+}
+
+export function computePlannedWorkingDaysInRange(
+  task: ScheduleTask,
+  holidayMap: Map<string, HolidayItem>,
+  rangeStart?: string,
+  rangeEnd?: string
+): number {
+  if (!rangeStart && !rangeEnd) {
+    return computePlannedWorkingDays(task, holidayMap);
+  }
+  if (!task.plannedStart || !task.plannedEnd || task.plannedStart > task.plannedEnd) {
+    return 0;
+  }
+  const dates = getEffectivePlannedDates(task, holidayMap);
+  let count = 0;
+  for (const dateStr of dates) {
+    if (rangeStart && dateStr < rangeStart) continue;
+    if (rangeEnd && dateStr > rangeEnd) continue;
+    count++;
+  }
+  return count;
+}
+
+export function computeActualWorkingDaysInRange(
+  task: ScheduleTask,
+  holidayMap: Map<string, HolidayItem>,
+  rangeStart?: string,
+  rangeEnd?: string
+): number {
+  if (!rangeStart && !rangeEnd) {
+    return computeActualWorkingDays(task, holidayMap);
+  }
+  const dates = getEffectiveActualDates(task, holidayMap);
+  let count = 0;
+  for (const dateStr of dates) {
+    if (rangeStart && dateStr < rangeStart) continue;
+    if (rangeEnd && dateStr > rangeEnd) continue;
+    count++;
+  }
+  return count;
+}
+
+function doesDateRangeOverlap(
+  startA: string,
+  endA: string,
+  rangeStart?: string,
+  rangeEnd?: string
+): boolean {
+  if (!startA && !endA) return false;
+  const s = startA || endA;
+  const e = endA || startA;
+  if (rangeStart && e < rangeStart) return false;
+  if (rangeEnd && s > rangeEnd) return false;
+  return true;
+}
+
+export function computeTaskPcbQtyInRange(
+  task: ScheduleTask,
+  holidayMap: Map<string, HolidayItem>,
+  rangeStart?: string,
+  rangeEnd?: string
+): { plannedPcb: number; actualPcb: number } {
+  if (task.pcbMode !== 'qty') {
+    return { plannedPcb: 0, actualPcb: 0 };
+  }
+  if (!rangeStart && !rangeEnd) {
+    return {
+      plannedPcb: task.plannedQty ?? 0,
+      actualPcb: task.actualQty ?? 0,
+    };
+  }
+
+  const hasPlannedRange = Boolean(task.plannedStart || task.plannedEnd);
+  const plannedOverlaps =
+    hasPlannedRange &&
+    doesDateRangeOverlap(task.plannedStart, task.plannedEnd, rangeStart, rangeEnd);
+
+  const effActual = getEffectiveActualRangeDisplay(task);
+  const actualDates = getEffectiveActualDates(task, holidayMap);
+  let hasActualDateInRange = false;
+  for (const d of actualDates) {
+    if (rangeStart && d < rangeStart) continue;
+    if (rangeEnd && d > rangeEnd) continue;
+    hasActualDateInRange = true;
+    break;
+  }
+  const actualOverlaps =
+    hasActualDateInRange ||
+    doesDateRangeOverlap(effActual.start, effActual.end, rangeStart, rangeEnd);
+
+  const hasAnyActualSpan = Boolean(
+    effActual.start || effActual.end || actualDates.size > 0
+  );
+
+  // If a task has plannedQty but no planned dates set yet (e.g. unscheduled rush review),
+  // attribute its plannedQty to the window where its actual activity occurs.
+  const includePlanned = hasPlannedRange ? plannedOverlaps : actualOverlaps;
+  const includeActual = hasAnyActualSpan ? actualOverlaps : plannedOverlaps;
+
+  return {
+    plannedPcb: includePlanned ? task.plannedQty ?? 0 : 0,
+    actualPcb: includeActual ? task.actualQty ?? 0 : 0,
+  };
 }
 
 export type PlannedBarSegment = 'none' | 'single' | 'start' | 'middle' | 'end';

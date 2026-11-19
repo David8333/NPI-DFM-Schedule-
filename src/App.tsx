@@ -19,7 +19,6 @@ import {
   TaskStatus,
 } from './types/schedule';
 import {
-  DEFAULT_REFERENCE_TODAY,
   INITIAL_HOLIDAYS,
   INITIAL_PROJECTS,
 } from './data/initialData';
@@ -29,8 +28,11 @@ import {
 } from './data/taiwanHolidays';
 import {
   buildHolidayMap,
-  computeActualWorkingDays,
-  computePlannedWorkingDays,
+  computeActualWorkingDaysInRange,
+  computePlannedWorkingDaysInRange,
+  computeTaskPcbQtyInRange,
+  getThisWeekRange,
+  getTodayISO,
   isTaskDelayedOrWarning,
 } from './utils/dateUtils';
 import {
@@ -181,13 +183,32 @@ export default function App() {
   const [startDate, setStartDate] = useState('2026-07-01');
   const [endDate, setEndDate] = useState('2026-09-30');
   const [calendarYear, setCalendarYear] = useState(2026);
-  const [referenceToday, setReferenceToday] = useState(DEFAULT_REFERENCE_TODAY);
+  const isAutoReferenceTodayRef = useRef(true);
+  const [referenceToday, setReferenceToday] = useState(() => getTodayISO());
   const [ganttClickMode, setGanttClickMode] = useState<GanttClickMode>('inspect');
   const [isScheduleEditable, setIsScheduleEditable] = useState(true);
   const [isFullscreenSchedule, setIsFullscreenSchedule] = useState(false);
   const [compactSticky, setCompactSticky] = useState(false);
   const [classicColors, setClassicColors] = useState(true);
   const [showInlineWeeklyDfm, setShowInlineWeeklyDfm] = useState(false);
+
+  // Keep 追控基準日 synchronized with the real current calendar date unless manually overridden
+  useEffect(() => {
+    const syncToday = () => {
+      if (!isAutoReferenceTodayRef.current) return;
+      const today = getTodayISO();
+      setReferenceToday((prev) => (prev === today ? prev : today));
+    };
+    syncToday();
+    window.addEventListener('focus', syncToday);
+    document.addEventListener('visibilitychange', syncToday);
+    const timer = window.setInterval(syncToday, 60_000);
+    return () => {
+      window.removeEventListener('focus', syncToday);
+      document.removeEventListener('visibilitychange', syncToday);
+      window.clearInterval(timer);
+    };
+  }, []);
 
   // Modals & Toast
   const [editingTaskTarget, setEditingTaskTarget] = useState<{
@@ -352,6 +373,8 @@ export default function App() {
     let warningCount = 0;
     let plannedDaysTotal = 0;
     let actualDaysTotal = 0;
+    let plannedPcbTotal = 0;
+    let actualPcbTotal = 0;
 
     for (const p of filteredProjects) {
       for (const t of p.tasks) {
@@ -361,8 +384,21 @@ export default function App() {
         if (isTaskDelayedOrWarning(t, referenceToday, holidayMap).isWarning) {
           warningCount++;
         }
-        plannedDaysTotal += computePlannedWorkingDays(t, holidayMap);
-        actualDaysTotal += computeActualWorkingDays(t, holidayMap);
+        plannedDaysTotal += computePlannedWorkingDaysInRange(
+          t,
+          holidayMap,
+          startDate,
+          endDate
+        );
+        actualDaysTotal += computeActualWorkingDaysInRange(
+          t,
+          holidayMap,
+          startDate,
+          endDate
+        );
+        const pcb = computeTaskPcbQtyInRange(t, holidayMap, startDate, endDate);
+        plannedPcbTotal += pcb.plannedPcb;
+        actualPcbTotal += pcb.actualPcb;
       }
     }
 
@@ -374,8 +410,10 @@ export default function App() {
       warningCount,
       plannedDaysTotal,
       actualDaysTotal,
+      plannedPcbTotal,
+      actualPcbTotal,
     };
-  }, [filteredProjects, holidays, referenceToday]);
+  }, [filteredProjects, holidays, referenceToday, startDate, endDate]);
 
   const handleToggleTaskCompleted = (projectId: string, taskId: string) => {
     mutateProjects((prev) =>
@@ -734,9 +772,18 @@ export default function App() {
               ·
             </span>
             <span>
-              預計/實際總工時{' '}
+              區間總工時(預/實){' '}
               <strong className="text-slate-900">
                 {summaryStats.plannedDaysTotal} / {summaryStats.actualDaysTotal} 天
+              </strong>
+            </span>
+            <span aria-hidden="true" className="text-slate-300">
+              ·
+            </span>
+            <span>
+              DFM PCB(實/預){' '}
+              <strong className="text-slate-900">
+                {summaryStats.actualPcbTotal} / {summaryStats.plannedPcbTotal} 片
               </strong>
             </span>
             {summaryStats.warningCount > 0 && (
@@ -771,7 +818,7 @@ export default function App() {
 
             <div
               className="flex items-center gap-1.5"
-              title="追控基準日功能：1. 甘特圖日曆加上藍色基準框；2. 預計開始日已過卻未填入實際開始日會以紅底標示警示；3. 計算上方 KPI 與統計報表的延遲/超支預警清單"
+              title="追控基準日預設自動跟隨當天日期變動：1. 甘特圖日曆加上藍色基準框；2. 預計開始日已過卻未填入實際開始日會以紅底標示警示；3. 計算上方 KPI 與統計報表的延遲/超支預警清單"
             >
               <label htmlFor="ref-today" className="whitespace-nowrap cursor-help">
                 追控基準日：
@@ -780,9 +827,26 @@ export default function App() {
                 id="ref-today"
                 type="date"
                 value={referenceToday}
-                onChange={(e) => setReferenceToday(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  isAutoReferenceTodayRef.current = val === getTodayISO();
+                  setReferenceToday(val);
+                }}
                 className="px-2 py-1 text-xs font-mono bg-white border border-slate-300 rounded-md text-slate-800"
               />
+              {referenceToday !== getTodayISO() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    isAutoReferenceTodayRef.current = true;
+                    setReferenceToday(getTodayISO());
+                  }}
+                  className="px-2 py-1 text-[11px] font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-md whitespace-nowrap"
+                  title="重設為自動跟隨系統今日日期"
+                >
+                  回到今日
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -903,21 +967,29 @@ export default function App() {
                       </option>
                     ))}
                   </select>
-                  <div className="flex items-center gap-1 p-0.5 bg-slate-100 rounded-md">
-                    {[
-                      { label: 'Q1', s: `${calendarYear}-01-01`, e: `${calendarYear}-03-31` },
-                      { label: 'Q2', s: `${calendarYear}-04-01`, e: `${calendarYear}-06-30` },
-                      { label: 'Q3', s: `${calendarYear}-07-01`, e: `${calendarYear}-09-30` },
-                      { label: 'Q4', s: `${calendarYear}-10-01`, e: `${calendarYear}-12-31` },
-                      { label: '上半年全覽', s: `${calendarYear}-01-01`, e: `${calendarYear}-06-30` },
-                      { label: '下半年全覽', s: `${calendarYear}-07-01`, e: `${calendarYear}-12-31` },
-                    ].map((preset) => {
+                  <div className="flex flex-wrap items-center gap-1 p-0.5 bg-slate-100 rounded-md">
+                    {(() => {
+                      const thisWeek = getThisWeekRange();
+                      return [
+                        { label: '本週', s: thisWeek.start, e: thisWeek.end, yearOverride: thisWeek.year },
+                        { label: 'Q1', s: `${calendarYear}-01-01`, e: `${calendarYear}-03-31` },
+                        { label: 'Q2', s: `${calendarYear}-04-01`, e: `${calendarYear}-06-30` },
+                        { label: 'Q3', s: `${calendarYear}-07-01`, e: `${calendarYear}-09-30` },
+                        { label: 'Q4', s: `${calendarYear}-10-01`, e: `${calendarYear}-12-31` },
+                        { label: '上半年全覽', s: `${calendarYear}-01-01`, e: `${calendarYear}-06-30` },
+                        { label: '下半年全覽', s: `${calendarYear}-07-01`, e: `${calendarYear}-12-31` },
+                        { label: '年度全覽', s: `${calendarYear}-01-01`, e: `${calendarYear}-12-31` },
+                      ];
+                    })().map((preset) => {
                       const active = startDate === preset.s && endDate === preset.e;
                       return (
                         <button
                           key={preset.label}
                           type="button"
                           onClick={() => {
+                            if (preset.yearOverride) {
+                              setCalendarYear(preset.yearOverride);
+                            }
                             setStartDate(preset.s);
                             setEndDate(preset.e);
                           }}

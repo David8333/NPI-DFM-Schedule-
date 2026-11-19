@@ -1,7 +1,8 @@
 import { HolidayItem, ProjectModel } from '../types/schedule';
 import { TAIWAN_OFFICIAL_HOLIDAYS_2023_2033 } from './taiwanHolidays';
+import { getTodayISO } from '../utils/dateUtils';
 
-export const DEFAULT_REFERENCE_TODAY = '2026-11-13';
+export const DEFAULT_REFERENCE_TODAY = getTodayISO();
 
 export const INITIAL_HOLIDAYS: HolidayItem[] = TAIWAN_OFFICIAL_HOLIDAYS_2023_2033;
 
