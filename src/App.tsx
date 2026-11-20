@@ -27,6 +27,7 @@ import {
   TAIWAN_HOLIDAY_YEARS,
 } from './data/taiwanHolidays';
 import {
+  buildDefaultExportFilename,
   buildHolidayMap,
   computeActualWorkingDaysInRange,
   computePlannedWorkingDaysInRange,
@@ -178,13 +179,17 @@ export default function App() {
     };
   }, []);
 
-  // Filters & View Controls
+  // Filters & View Controls (defaults: current year full-year overview, all stages, all statuses, inspect safe mode)
   const [searchQuery, setSearchQuery] = useState('');
   const [stageFilter, setStageFilter] = useState<'ALL' | ProjectStage>('ALL');
   const [statusFilter, setStatusFilter] = useState<'ALL' | TaskStatus>('ALL');
-  const [startDate, setStartDate] = useState('2026-07-01');
-  const [endDate, setEndDate] = useState('2026-09-30');
-  const [calendarYear, setCalendarYear] = useState(2026);
+  const [calendarYear, setCalendarYear] = useState(() => new Date().getFullYear());
+  const [startDate, setStartDate] = useState(
+    () => `${new Date().getFullYear()}-01-01`
+  );
+  const [endDate, setEndDate] = useState(
+    () => `${new Date().getFullYear()}-12-31`
+  );
   const isAutoReferenceTodayRef = useRef(true);
   const [referenceToday, setReferenceToday] = useState(() => getTodayISO());
   const [ganttClickMode, setGanttClickMode] = useState<GanttClickMode>('inspect');
@@ -668,7 +673,7 @@ export default function App() {
         filteredProjects,
         holidays,
         {
-          filename: `NPI_專案管理排程追控表_${startDate}_至_${endDate}`,
+          filename: buildDefaultExportFilename(startDate, endDate),
           startDate,
           endDate,
           theme: classicColors ? 'classic_npi' : 'modern_corp',
@@ -963,11 +968,13 @@ export default function App() {
                     className="px-2 py-1 text-xs font-mono font-semibold bg-white border border-slate-200 rounded text-slate-800"
                     aria-label="選擇日曆年份"
                   >
-                    {TAIWAN_HOLIDAY_YEARS.map((yr) => (
-                      <option key={yr} value={yr}>
-                        {yr}年
-                      </option>
-                    ))}
+                    {Array.from(new Set([...TAIWAN_HOLIDAY_YEARS, calendarYear]))
+                      .sort((a, b) => a - b)
+                      .map((yr) => (
+                        <option key={yr} value={yr}>
+                          {yr}年
+                        </option>
+                      ))}
                   </select>
                   <div className="flex flex-wrap items-center gap-1 p-0.5 bg-slate-100 rounded-md">
                     {(() => {

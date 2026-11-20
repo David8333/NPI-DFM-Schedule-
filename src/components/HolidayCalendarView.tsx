@@ -6,7 +6,7 @@ import {
   TAIWAN_HOLIDAY_YEAR_MIN,
   TAIWAN_HOLIDAY_YEARS,
 } from '../data/taiwanHolidays';
-import { buildHolidayMap, generateCalendarDays } from '../utils/dateUtils';
+import { buildHolidayMap, generateCalendarDays, getTodayISO } from '../utils/dateUtils';
 
 interface HolidayCalendarViewProps {
   holidays: HolidayItem[];
@@ -73,8 +73,8 @@ export const HolidayCalendarView: React.FC<HolidayCalendarViewProps> = ({
   onRemoveHoliday,
   onSyncTaiwanHolidays,
 }) => {
-  const [selectedYear, setSelectedYear] = useState(2026);
-  const [newDate, setNewDate] = useState('2026-08-14');
+  const [selectedYear, setSelectedYear] = useState(() => new Date().getFullYear());
+  const [newDate, setNewDate] = useState(() => getTodayISO());
   const [newName, setNewName] = useState('');
   const [newType, setNewType] = useState<CalendarDayEntryType>('factory_off');
   const [quickPaintType, setQuickPaintType] = useState<CalendarDayEntryType>('factory_off');

@@ -130,6 +130,15 @@ export function getThisMonthRange(baseDate: Date = new Date()): {
   };
 }
 
+export function buildDefaultExportFilename(
+  startDate: string,
+  endDate: string,
+  exportDateISO: string = getTodayISO()
+): string {
+  const isoWeek = getISOWeekCode(exportDateISO) || exportDateISO.slice(0, 7);
+  return `${isoWeek}_NPI_專案管理排程追控表_${startDate}_至_${endDate}`;
+}
+
 export function generateCalendarDays(startDateStr: string, endDateStr: string): CalendarDay[] {
   const start = parseLocalDate(startDateStr);
   const end = parseLocalDate(endDateStr);

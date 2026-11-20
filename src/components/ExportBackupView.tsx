@@ -12,6 +12,7 @@ import {
   StorageDiagnostics,
 } from '../utils/storage';
 import {
+  buildDefaultExportFilename,
   getLastWeekRange,
   getThisMonthRange,
   getThisWeekRange,
@@ -38,7 +39,10 @@ export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
   onImportBackupData,
   onResetDefaultData,
 }) => {
-  const [filename, setFilename] = useState('NPI_專案管理排程追控表_2026');
+  const [filename, setFilename] = useState(() =>
+    buildDefaultExportFilename(defaultStartDate, defaultEndDate)
+  );
+  const hasCustomFilenameRef = useRef(false);
   const [startDate, setStartDate] = useState(defaultStartDate);
   const [endDate, setEndDate] = useState(defaultEndDate);
   const [theme, setTheme] = useState<ExcelThemeMode>('classic_npi');
@@ -51,6 +55,12 @@ export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
   const [storageDiag, setStorageDiag] = useState<StorageDiagnostics | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    if (!hasCustomFilenameRef.current) {
+      setFilename(buildDefaultExportFilename(startDate, endDate));
+    }
+  }, [startDate, endDate]);
 
   useEffect(() => {
     let active = true;
@@ -161,7 +171,10 @@ export const ExportBackupView: React.FC<ExportBackupViewProps> = ({
               <input
                 type="text"
                 value={filename}
-                onChange={(e) => setFilename(e.target.value)}
+                onChange={(e) => {
+                  hasCustomFilenameRef.current = true;
+                  setFilename(e.target.value);
+                }}
                 className="flex-1 px-3 py-2 text-sm font-mono border border-slate-300 rounded-l-lg focus:outline-none focus:ring-2 focus:ring-slate-900"
                 required
               />
