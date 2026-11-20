@@ -135,7 +135,9 @@ export function buildDefaultExportFilename(
   endDate: string,
   exportDateISO: string = getTodayISO()
 ): string {
-  const isoWeek = getISOWeekCode(exportDateISO) || exportDateISO.slice(0, 7);
+  const parsed = parseLocalDate(exportDateISO) ?? new Date();
+  const lastWeekStart = getLastWeekRange(parsed).start;
+  const isoWeek = getISOWeekCode(lastWeekStart) || lastWeekStart.slice(0, 7);
   return `${isoWeek}_NPI_專案管理排程追控表_${startDate}_至_${endDate}`;
 }
 
