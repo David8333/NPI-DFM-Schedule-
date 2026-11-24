@@ -8,6 +8,7 @@ import {
   Check,
   CalendarRange,
   Undo2,
+  FileSpreadsheet,
 } from 'lucide-react';
 import {
   DailyOverrideType,
@@ -50,9 +51,14 @@ import {
   STORAGE_KEY_TW_SEED,
 } from './utils/storage';
 import { exportScheduleToExcel } from './utils/excelExport';
+import {
+  ExcelParseResult,
+  parseScheduleFromExcelBuffer,
+} from './utils/excelImport';
 import { GanttClickMode, ScheduleGrid } from './components/ScheduleGrid';
 import { TaskEditModal } from './components/TaskEditModal';
 import { ProjectFormModal } from './components/ProjectFormModal';
+import { ExcelImportModal, ExcelImportMode } from './components/ExcelImportModal';
 import { AnalyticsView } from './components/AnalyticsView';
 import { HolidayCalendarView } from './components/HolidayCalendarView';
 import { ExportBackupView } from './components/ExportBackupView';
@@ -228,6 +234,13 @@ export default function App() {
   }>({ open: false, project: null });
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [isQuickExporting, setIsQuickExporting] = useState(false);
+  const excelInputRef = useRef<HTMLInputElement | null>(null);
+  const [isParsingExcel, setIsParsingExcel] = useState(false);
+  const [excelImportModalState, setExcelImportModalState] = useState<{
+    result: ExcelParseResult;
+    buffer: ArrayBuffer;
+    filename: string;
+  } | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToastMessage(msg);
@@ -689,6 +702,125 @@ export default function App() {
     }
   };
 
+  const handleExcelFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+
+    const lowerName = file.name.toLowerCase();
+    if (lowerName.endsWith('.xls') && !lowerName.endsWith('.xlsx')) {
+      showToast('僅支援 .xlsx 格式，若為舊版 .xls 請先於 Excel 另存新檔為 .xlsx 後再匯入');
+      return;
+    }
+
+    setIsParsingExcel(true);
+    try {
+      const buffer = await file.arrayBuffer();
+      const result = await parseScheduleFromExcelBuffer(buffer, file.name, holidays);
+      setExcelImportModalState({ result, buffer, filename: file.name });
+    } catch (err) {
+      showToast(
+        err instanceof Error
+          ? `匯入失敗：${err.message}`
+          : '匯入 Excel 失敗，請確認檔案為有效的 .xlsx 排程表'
+      );
+    } finally {
+      setIsParsingExcel(false);
+    }
+  };
+
+  const handleConfirmExcelImport = (
+    importedProjects: ProjectModel[],
+    mode: ExcelImportMode,
+    detectedYear: number
+  ) => {
+    if (mode === 'replace') {
+      const sorted = [...importedProjects].sort((a, b) => a.seqNo - b.seqNo);
+      mutateProjects(() => sorted);
+    } else {
+      mutateProjects((prev) => {
+        const byModelKey = new Map<string, ProjectModel>();
+        for (const p of prev) {
+          const key = p.modelName.trim().toUpperCase();
+          byModelKey.set(key, {
+            ...p,
+            tasks: p.tasks.map((t) => ({ ...t })),
+          });
+        }
+
+        for (const imp of importedProjects) {
+          const key = imp.modelName.trim().toUpperCase();
+          const existing = byModelKey.get(key);
+          if (!existing) {
+            byModelKey.set(key, {
+              ...imp,
+              tasks: imp.tasks.map((t) => ({ ...t })),
+            });
+          } else {
+            // Unify same model name under one seqNo (smallest seqNo) and merge tasks
+            const mergedTasks = [...existing.tasks];
+            for (const impTask of imp.tasks) {
+              const normName = impTask.taskName.trim().toUpperCase();
+              const matchIdx = mergedTasks.findIndex(
+                (t) => t.taskName.trim().toUpperCase() === normName
+              );
+              if (matchIdx >= 0) {
+                mergedTasks[matchIdx] = {
+                  ...impTask,
+                  id: mergedTasks[matchIdx].id,
+                };
+              } else {
+                mergedTasks.push(impTask);
+              }
+            }
+
+            byModelKey.set(key, {
+              ...existing,
+              seqNo: Math.min(existing.seqNo, imp.seqNo),
+              modelSubtitle: existing.modelSubtitle || imp.modelSubtitle,
+              customer: existing.customer || imp.customer,
+              ee: existing.ee || imp.ee,
+              me: existing.me || imp.me,
+              tasks: mergedTasks,
+            });
+          }
+        }
+
+        return Array.from(byModelKey.values()).sort((a, b) => a.seqNo - b.seqNo);
+      });
+    }
+
+    // Clear restrictive filters so newly imported models are immediately visible
+    setStageFilter('ALL');
+    setStatusFilter('ALL');
+    setSearchQuery('');
+
+    // If none of the imported tasks overlap the active calendar window, switch to the detected year's full overview
+    const anyVisibleInCurrentRange = importedProjects.some((p) =>
+      p.tasks.some((t) => {
+        const dates = [
+          t.plannedStart,
+          t.plannedEnd,
+          t.actualStart,
+          t.actualEnd,
+          ...Object.keys(t.dailyOverrides || {}),
+        ].filter(Boolean);
+        return dates.some((d) => d >= startDate && d <= endDate);
+      })
+    );
+    if (!anyVisibleInCurrentRange && detectedYear >= 2000 && detectedYear <= 2100) {
+      setCalendarYear(detectedYear);
+      setStartDate(`${detectedYear}-01-01`);
+      setEndDate(`${detectedYear}-12-31`);
+    }
+
+    setExcelImportModalState(null);
+    setActiveTab('schedule');
+    showToast(
+      `已${mode === 'replace' ? '匯入取代' : '依機種合併'} ${importedProjects.length} 款機種（已依序號由小到大排序）`
+    );
+  };
+
   const nextSeqNo = useMemo(() => {
     if (projects.length === 0) return 1;
     return Math.max(...projects.map((p) => p.seqNo)) + 1;
@@ -941,14 +1073,26 @@ export default function App() {
                   </div>
                 </div>
 
-                <button
-                  type="button"
-                  onClick={() => setProjectModalState({ open: true, project: null })}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md transition-colors whitespace-nowrap shrink-0"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  新增機種專案
-                </button>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    disabled={isParsingExcel}
+                    onClick={() => excelInputRef.current?.click()}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-300 disabled:opacity-60 rounded-md transition-colors whitespace-nowrap shrink-0"
+                    title="直接匯入 .xlsx 排程表（自動依序號排序並合併同機種）"
+                  >
+                    <FileSpreadsheet className="w-3.5 h-3.5" />
+                    {isParsingExcel ? '讀取中...' : '匯入 Excel'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setProjectModalState({ open: true, project: null })}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-slate-900 hover:bg-slate-800 rounded-md transition-colors whitespace-nowrap shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    新增機種專案
+                  </button>
+                </div>
               </div>
 
               {/* Row 2: Calendar Window & View Toggles */}
@@ -1246,6 +1390,7 @@ export default function App() {
             defaultStartDate={startDate}
             defaultEndDate={endDate}
             onTriggerExcelExport={handleTriggerExcelExport}
+            onTriggerExcelImport={() => excelInputRef.current?.click()}
             onImportBackupData={(importedProjects, importedHolidays) => {
               mutateProjects(() => normalizeProjects(importedProjects));
               if (importedHolidays) mutateHolidays(() => importedHolidays);
@@ -1257,6 +1402,14 @@ export default function App() {
           />
         )}
       </main>
+
+      <input
+        ref={excelInputRef}
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        onChange={handleExcelFileChange}
+        className="hidden"
+      />
 
       {/* Modals */}
       {editingTaskTarget && (
@@ -1276,6 +1429,18 @@ export default function App() {
           nextSeqNo={nextSeqNo}
           onClose={() => setProjectModalState({ open: false, project: null })}
           onSaveProject={handleSaveProject}
+        />
+      )}
+
+      {excelImportModalState && (
+        <ExcelImportModal
+          initialResult={excelImportModalState.result}
+          rawBuffer={excelImportModalState.buffer}
+          filename={excelImportModalState.filename}
+          holidays={holidays}
+          existingProjectsCount={projects.length}
+          onClose={() => setExcelImportModalState(null)}
+          onConfirmImport={handleConfirmExcelImport}
         />
       )}
 
