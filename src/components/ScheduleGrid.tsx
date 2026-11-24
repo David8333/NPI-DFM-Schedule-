@@ -371,9 +371,9 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
   if (projects.length === 0) {
     return (
       <div className="border border-slate-200 bg-white rounded-lg p-12 text-center">
-        <p className="text-base font-semibold text-slate-900">目前沒有符合篩選條件的專案排程</p>
+        <p className="text-base font-semibold text-slate-900">目前尚無符合條件或已建立的專案排程</p>
         <p className="mt-1 text-sm text-slate-500">
-          請調整上方搜尋關鍵字、階段或狀態篩選器，或點擊「新增機種專案」建立排程。
+          請調整上方篩選條件，或點擊「匯入 Excel」、「新增機種專案」建立您的排程資料。
         </p>
       </div>
     );

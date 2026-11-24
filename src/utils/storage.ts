@@ -8,6 +8,7 @@ export const STORAGE_KEY_PROJECTS = 'npi_schedule_projects_v2';
 export const STORAGE_KEY_HOLIDAYS = 'npi_schedule_holidays_v2';
 export const STORAGE_KEY_TW_SEED = 'npi_tw_holidays_seeded_2023_2033_v1';
 export const STORAGE_KEY_FACTORY_CLEANUP = 'npi_clear_sample_factory_off_v1';
+export const STORAGE_KEY_SAMPLE_PROJECTS_CLEANUP = 'npi_clear_default_sample_projects_v1';
 
 export interface StorageDiagnostics {
   backend: 'IndexedDB + 本機快取' | 'localStorage 本機快取';

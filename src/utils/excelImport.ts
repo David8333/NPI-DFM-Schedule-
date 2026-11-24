@@ -14,6 +14,8 @@ export interface ParsedSheetCandidate {
   name: string;
   rowCount: number;
   hasGanttSchedule: boolean;
+  isHidden: boolean;
+  estimatedDataRows: number;
 }
 
 export interface ExcelParseResult {
@@ -58,6 +60,13 @@ function getEffectiveCell(sheet: ExcelJS.Worksheet, row: number, col: number): E
   return cell;
 }
 
+function unwrapFormulaResult(val: ExcelJS.CellValue): ExcelJS.CellValue {
+  if (val && typeof val === 'object' && 'result' in val && val.result !== undefined) {
+    return unwrapFormulaResult(val.result as ExcelJS.CellValue);
+  }
+  return val;
+}
+
 function cellValueToString(val: ExcelJS.CellValue): string {
   if (val === null || val === undefined) return '';
   if (typeof val === 'string') return val.trim();
@@ -69,14 +78,23 @@ function cellValueToString(val: ExcelJS.CellValue): string {
     return `${y}-${m}-${d}`;
   }
   if (typeof val === 'object') {
+    if ('error' in val && val.error !== undefined) {
+      return '';
+    }
     if ('richText' in val && Array.isArray(val.richText)) {
       return val.richText.map((part) => part.text || '').join('').trim();
     }
-    if ('result' in val && val.result !== undefined) {
-      return cellValueToString(val.result as ExcelJS.CellValue);
+    if ('result' in val) {
+      if (val.result !== undefined) {
+        return cellValueToString(val.result as ExcelJS.CellValue);
+      }
+      return '';
     }
-    if ('text' in val && typeof val.text === 'string') {
-      return val.text.trim();
+    // IMPORTANT: Hyperlinks with formatted text store `{ text: { richText: [...] }, hyperlink: '...' }`.
+    // Always extract `text` recursively before ever considering `hyperlink`.
+    if ('text' in val && val.text !== undefined) {
+      const extractedText = cellValueToString(val.text as ExcelJS.CellValue);
+      if (extractedText) return extractedText;
     }
     if ('hyperlink' in val && typeof val.hyperlink === 'string') {
       return val.hyperlink.trim();
@@ -88,19 +106,45 @@ function cellValueToString(val: ExcelJS.CellValue): string {
 function getMergedText(sheet: ExcelJS.Worksheet, row: number, col: number): string {
   if (!col || col < 1) return '';
   const master = getEffectiveCell(sheet, row, col);
-  return cellValueToString(master.value);
+  const direct = cellValueToString(master.value);
+  if (direct) return direct;
+  if (
+    master.value &&
+    typeof master.value === 'object' &&
+    !('error' in master.value) &&
+    !('formula' in master.value) &&
+    !('sharedFormula' in master.value) &&
+    typeof master.text === 'string' &&
+    master.text !== '[object Object]'
+  ) {
+    return master.text.trim();
+  }
+  return '';
 }
 
 function getRawCellText(sheet: ExcelJS.Worksheet, row: number, col: number): string {
   if (!col || col < 1) return '';
-  return cellValueToString(sheet.getCell(row, col).value);
+  const cell = sheet.getCell(row, col);
+  const direct = cellValueToString(cell.value);
+  if (direct) return direct;
+  if (
+    cell.value &&
+    typeof cell.value === 'object' &&
+    !('error' in cell.value) &&
+    !('formula' in cell.value) &&
+    !('sharedFormula' in cell.value) &&
+    typeof cell.text === 'string' &&
+    cell.text !== '[object Object]'
+  ) {
+    return cell.text.trim();
+  }
+  return '';
 }
 
 function parseArgbToRgb(argb?: string): [number, number, number] | null {
   if (!argb || typeof argb !== 'string') return null;
   const clean = argb.replace(/^#/, '').trim();
   if (clean.length === 8) {
-    // AARRGGBB
     const alpha = parseInt(clean.slice(0, 2), 16);
     if (alpha === 0) return null;
     return [
@@ -119,7 +163,6 @@ function parseArgbToRgb(argb?: string): [number, number, number] | null {
   return null;
 }
 
-// Standard Office default theme palette fallback (when Excel saves theme index instead of ARGB)
 const OFFICE_THEME_BASE_RGB: Record<number, [number, number, number]> = {
   0: [255, 255, 255],
   1: [0, 0, 0],
@@ -141,22 +184,27 @@ function applyTint(rgb: [number, number, number], tint?: number): [number, numbe
   }) as [number, number, number];
 }
 
+function extractColorRgb(
+  color?: Partial<ExcelJS.Color> & { tint?: number }
+): [number, number, number] | null {
+  if (!color) return null;
+  if (color.argb) {
+    const rgb = parseArgbToRgb(color.argb);
+    if (rgb) return applyTint(rgb, color.tint);
+  }
+  if (typeof color.theme === 'number' && OFFICE_THEME_BASE_RGB[color.theme]) {
+    return applyTint(OFFICE_THEME_BASE_RGB[color.theme], color.tint);
+  }
+  return null;
+}
+
 function extractFillRgb(cell: ExcelJS.Cell): [number, number, number] | null {
   const fill = cell.fill;
   if (!fill || fill.type !== 'pattern' || fill.pattern === 'none') return null;
   const fg = (fill as ExcelJS.FillPattern).fgColor as
     | (Partial<ExcelJS.Color> & { tint?: number })
     | undefined;
-  if (!fg) return null;
-
-  if (fg.argb) {
-    const rgb = parseArgbToRgb(fg.argb);
-    if (rgb) return applyTint(rgb, fg.tint);
-  }
-  if (typeof fg.theme === 'number' && OFFICE_THEME_BASE_RGB[fg.theme]) {
-    return applyTint(OFFICE_THEME_BASE_RGB[fg.theme], fg.tint);
-  }
-  return null;
+  return extractColorRgb(fg);
 }
 
 function isNearWhiteBackground(rgb: [number, number, number]): boolean {
@@ -168,10 +216,21 @@ function classifyPlannedFill(rgb: [number, number, number] | null): boolean {
   if (!rgb) return false;
   if (isNearWhiteBackground(rgb)) return false;
   const [r, g, b] = rgb;
-  // Exclude light neutral gray grid borders/fills; accept orange/amber/purple/saturated fills
   const spread = Math.max(r, g, b) - Math.min(r, g, b);
-  if (spread >= 20) return true;
-  return false;
+  return spread >= 20;
+}
+
+function hasColoredPlannedBorder(cell: ExcelJS.Cell): boolean {
+  const border = cell.border;
+  if (!border) return false;
+  const isAccentEdge = (edge?: Partial<ExcelJS.Border>) => {
+    if (!edge || !edge.style || edge.style === 'thin' || edge.style === 'hair') return false;
+    const rgb = extractColorRgb(edge.color as (Partial<ExcelJS.Color> & { tint?: number }) | undefined);
+    if (!rgb) return false;
+    const spread = Math.max(...rgb) - Math.min(...rgb);
+    return spread >= 25;
+  };
+  return isAccentEdge(border.top) && isAccentEdge(border.bottom);
 }
 
 function classifyActualFill(
@@ -189,7 +248,7 @@ function classifyActualFill(
     return 'gray';
   }
 
-  // Water Blue / Sky Blue (試產確認 #38BDF8 / #00B0F0)
+  // Water Blue / Cyan / Sky Blue (試產確認 #38BDF8 / #00B0F0 / #00FFFF)
   if (b >= 165 && b > r + 40 && g >= 115 && b >= g - 15) {
     return 'pilot';
   }
@@ -214,55 +273,107 @@ function isGreenCompletionCell(cell: ExcelJS.Cell): boolean {
   return g > r + 15 && g >= b && g >= 140;
 }
 
-function parseExcelDateValue(
+function excelSerialToDate(serial: number): Date {
+  const utcMs = Math.round((serial - 25569) * 86400 * 1000);
+  return new Date(utcMs);
+}
+
+function parseExcelDateWithMeta(
   val: ExcelJS.CellValue,
   fallbackYear: number
-): string {
-  if (val === null || val === undefined || val === '') return '';
-
-  if (val instanceof Date) {
-    const y = val.getUTCFullYear();
-    const m = String(val.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(val.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+): { dateStr: string; hasExplicitYear: boolean } {
+  if (val === null || val === undefined || val === '') {
+    return { dateStr: '', hasExplicitYear: false };
   }
 
-  // Excel serial date number (e.g. 46226 -> 2026-07-23)
-  if (typeof val === 'number' && val > 30000 && val < 80000) {
-    const utcMs = Math.round((val - 25569) * 86400 * 1000);
-    const dt = new Date(utcMs);
+  const unwrapped = unwrapFormulaResult(val);
+  if (unwrapped instanceof Date) {
+    const y = unwrapped.getUTCFullYear();
+    const m = String(unwrapped.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(unwrapped.getUTCDate()).padStart(2, '0');
+    return { dateStr: `${y}-${m}-${d}`, hasExplicitYear: true };
+  }
+
+  if (typeof unwrapped === 'number' && unwrapped > 30000 && unwrapped < 80000) {
+    const dt = excelSerialToDate(unwrapped);
     const y = dt.getUTCFullYear();
     const m = String(dt.getUTCMonth() + 1).padStart(2, '0');
     const d = String(dt.getUTCDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    return { dateStr: `${y}-${m}-${d}`, hasExplicitYear: true };
   }
 
-  if (typeof val === 'object' && 'result' in val && val.result !== undefined) {
-    return parseExcelDateValue(val.result as ExcelJS.CellValue, fallbackYear);
-  }
+  const text = cellValueToString(unwrapped);
+  if (!text) return { dateStr: '', hasExplicitYear: false };
 
-  const text = cellValueToString(val);
-  if (!text) return '';
-
-  // YYYY-MM-DD or YYYY/MM/DD
   const isoMatch = text.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$/);
   if (isoMatch) {
-    return `${isoMatch[1]}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`;
+    return {
+      dateStr: `${isoMatch[1]}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`,
+      hasExplicitYear: true,
+    };
   }
 
-  // X月Y日
+  const zhFullMatch = text.match(/^(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/);
+  if (zhFullMatch) {
+    return {
+      dateStr: `${zhFullMatch[1]}-${zhFullMatch[2].padStart(2, '0')}-${zhFullMatch[3].padStart(2, '0')}`,
+      hasExplicitYear: true,
+    };
+  }
+
   const zhMatch = text.match(/^(\d{1,2})\s*月\s*(\d{1,2})\s*日?$/);
   if (zhMatch) {
-    return `${fallbackYear}-${zhMatch[1].padStart(2, '0')}-${zhMatch[2].padStart(2, '0')}`;
+    return {
+      dateStr: `${fallbackYear}-${zhMatch[1].padStart(2, '0')}-${zhMatch[2].padStart(2, '0')}`,
+      hasExplicitYear: false,
+    };
   }
 
-  // M/D
   const mdMatch = text.match(/^(\d{1,2})\/(\d{1,2})$/);
   if (mdMatch) {
-    return `${fallbackYear}-${mdMatch[1].padStart(2, '0')}-${mdMatch[2].padStart(2, '0')}`;
+    return {
+      dateStr: `${fallbackYear}-${mdMatch[1].padStart(2, '0')}-${mdMatch[2].padStart(2, '0')}`,
+      hasExplicitYear: false,
+    };
   }
 
-  return '';
+  return { dateStr: '', hasExplicitYear: false };
+}
+
+function shiftDateYear(dateStr: string, deltaYears: number): string {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return dateStr;
+  const yr = Number(dateStr.slice(0, 4)) + deltaYears;
+  return `${yr}${dateStr.slice(4)}`;
+}
+
+function adjustCrossYearPair(
+  startMeta: { dateStr: string; hasExplicitYear: boolean },
+  endMeta: { dateStr: string; hasExplicitYear: boolean },
+  firstCalMonth: number | null
+): { start: string; end: string } {
+  let start = startMeta.dateStr;
+  let end = endMeta.dateStr;
+
+  // If the sheet's calendar starts in Q1 (Jan-Mar), text-only dates in Oct-Dec belong to prior year
+  if (firstCalMonth !== null && firstCalMonth <= 3) {
+    if (start && !startMeta.hasExplicitYear && Number(start.slice(5, 7)) >= 10) {
+      start = shiftDateYear(start, -1);
+    }
+    if (end && !endMeta.hasExplicitYear && Number(end.slice(5, 7)) >= 10) {
+      end = shiftDateYear(end, -1);
+    }
+  }
+
+  // Fallback: if start > end (e.g. 12月15日 ~ 1月7日) and start lacked explicit year, move start back 1 year
+  if (start && end && start > end) {
+    if (!startMeta.hasExplicitYear) {
+      start = shiftDateYear(start, -1);
+    } else if (!endMeta.hasExplicitYear) {
+      end = shiftDateYear(end, 1);
+    }
+  }
+
+  return { start, end };
 }
 
 function parseMonthCellValue(
@@ -270,34 +381,35 @@ function parseMonthCellValue(
   val: ExcelJS.CellValue,
   defaultYear: number
 ): { month: number; year?: number } | null {
-  if (val instanceof Date) {
-    return { month: val.getUTCMonth() + 1, year: val.getUTCFullYear() };
+  const unwrapped = unwrapFormulaResult(val);
+  if (unwrapped instanceof Date) {
+    return { month: unwrapped.getUTCMonth() + 1, year: unwrapped.getUTCFullYear() };
+  }
+  if (typeof unwrapped === 'number' && unwrapped > 30000 && unwrapped < 80000) {
+    const dt = excelSerialToDate(unwrapped);
+    return { month: dt.getUTCMonth() + 1, year: dt.getUTCFullYear() };
   }
   const t = rawText.trim();
   if (!t) return null;
 
-  // e.g. "2026年7月 (Q3)" or "2026年07月"
   const ymZh = t.match(/(\d{4})\s*年\s*(\d{1,2})\s*月/);
   if (ymZh) {
     const m = Number(ymZh[2]);
     if (m >= 1 && m <= 12) return { year: Number(ymZh[1]), month: m };
   }
 
-  // e.g. "2026-07" or "2026/7"
   const ymSlash = t.match(/^(\d{4})[-/](\d{1,2})$/);
   if (ymSlash) {
     const m = Number(ymSlash[2]);
     if (m >= 1 && m <= 12) return { year: Number(ymSlash[1]), month: m };
   }
 
-  // e.g. "7", "7月", "12月"
   const mOnly = t.match(/^(\d{1,2})\s*月?$/);
   if (mOnly) {
     const m = Number(mOnly[1]);
     if (m >= 1 && m <= 12) return { month: m };
   }
 
-  // English month names
   const monthNames = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
   const lower = t.toLowerCase();
   const idx = monthNames.findIndex((mn) => lower.startsWith(mn));
@@ -340,26 +452,47 @@ function parseTaskStatus(raw: string, completed: boolean): TaskStatus {
   return completed ? 'C' : 'O';
 }
 
+function scoreHeaderRow(sheet: ExcelJS.Worksheet, rowIdx: number): number {
+  const maxCols = Math.min(Math.max(sheet.columnCount || 60, 60), 160);
+  const seen = new Set<string>();
+  let hasModel = false;
+
+  for (let c = 1; c <= maxCols; c++) {
+    const label = getMergedText(sheet, rowIdx, c).replace(/\s+/g, '');
+    if (!label || label.length > 24) continue;
+    if (label.includes('序號')) seen.add('seq');
+    if (label.includes('機種') || label.toLowerCase().includes('model')) {
+      seen.add('model');
+      hasModel = true;
+    }
+    if (label.includes('任務') || label.toLowerCase().includes('task')) seen.add('task');
+    if (label.toUpperCase().includes('PCB')) seen.add('pcb');
+    if (label === '完成' || label.includes('完成')) seen.add('done');
+    if (label === '開始' || label.includes('開始')) seen.add('start');
+    if (label === '結束' || label.includes('結束')) seen.add('end');
+    if (label.includes('工作天')) seen.add('days');
+    if (label === '狀態' || label.includes('狀態')) seen.add('status');
+    if (label === '排程' || label.includes('排程')) seen.add('schedule');
+  }
+
+  if (!hasModel || seen.size < 2) return 0;
+  const isHiddenRow = Boolean(sheet.getRow(rowIdx).hidden);
+  return seen.size * 10 + (isHiddenRow ? 0 : 5);
+}
+
 function detectColumnsAndCalendar(
   sheet: ExcelJS.Worksheet,
   baseYear: number
 ): ParsedColumnMap | null {
-  const maxScanRows = Math.min(sheet.rowCount || 15, 12);
+  const maxScanRows = Math.min(Math.max(sheet.rowCount || 80, 80), 150);
   let headerRowIdx = -1;
+  let bestScore = 0;
 
   for (let r = 1; r <= maxScanRows; r++) {
-    const row = sheet.getRow(r);
-    const texts: string[] = [];
-    for (let c = 1; c <= Math.min(row.cellCount || 15, 20); c++) {
-      texts.push(getMergedText(sheet, r, c));
-    }
-    const joined = texts.join('|');
-    if (
-      (joined.includes('機種') || joined.includes('Model')) &&
-      (joined.includes('任務') || joined.includes('序號') || joined.includes('排程'))
-    ) {
+    const score = scoreHeaderRow(sheet, r);
+    if (score > bestScore) {
+      bestScore = score;
       headerRowIdx = r;
-      break;
     }
   }
 
@@ -379,72 +512,88 @@ function detectColumnsAndCalendar(
   let meCol: number | undefined;
   let customerCol: number | undefined;
 
-  const maxHeaderCol = Math.min(sheet.columnCount || 20, 25);
+  const maxHeaderCol = Math.min(Math.max(sheet.columnCount || 60, 60), 160);
   let lastFixedCol = 0;
+
+  const colScores = {
+    seq: -1,
+    model: -1,
+    task: -1,
+    pcb: -1,
+    done: -1,
+    start: -1,
+    end: -1,
+    days: -1,
+    status: -1,
+    schedule: -1,
+  };
+
+  const assignBestCol = (
+    key: keyof typeof colScores,
+    colIdx: number,
+    exact: boolean,
+    isHiddenCol: boolean
+  ) => {
+    const candidateScore = (exact ? 10 : 5) + (isHiddenCol ? 0 : 20);
+    if (candidateScore > colScores[key]) {
+      colScores[key] = candidateScore;
+      lastFixedCol = Math.max(lastFixedCol, colIdx);
+      return true;
+    }
+    return false;
+  };
 
   for (let c = 1; c <= maxHeaderCol; c++) {
     const label = getMergedText(sheet, headerRowIdx, c).replace(/\s+/g, '');
-    if (!label) continue;
+    if (!label || label.length > 24) continue;
+    const isHiddenCol = Boolean(sheet.getColumn(c).hidden);
+    const lower = label.toLowerCase();
+
     if (label.includes('序號')) {
-      seqCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
-    } else if (label.includes('機種') || label.toLowerCase().includes('model')) {
-      modelCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
-    } else if (label.includes('任務') || label.toLowerCase().includes('task')) {
-      taskCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
+      if (assignBestCol('seq', c, label === '序號', isHiddenCol)) seqCol = c;
+    } else if (label.includes('機種') || lower.includes('model')) {
+      if (assignBestCol('model', c, label === '機種名稱', isHiddenCol)) modelCol = c;
+    } else if (label.includes('任務') || lower.includes('task')) {
+      if (assignBestCol('task', c, label === '任務名稱', isHiddenCol)) taskCol = c;
     } else if (label.toUpperCase().includes('PCB')) {
-      pcbCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
+      if (assignBestCol('pcb', c, label.toUpperCase() === 'PCB數量', isHiddenCol)) pcbCol = c;
     } else if (label === '完成' || label.includes('完成')) {
-      doneCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
+      if (assignBestCol('done', c, label === '完成', isHiddenCol)) doneCol = c;
     } else if (label === '開始' || label.includes('開始')) {
-      startCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
+      if (assignBestCol('start', c, label === '開始', isHiddenCol)) startCol = c;
     } else if (label === '結束' || label.includes('結束')) {
-      endCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
+      if (assignBestCol('end', c, label === '結束', isHiddenCol)) endCol = c;
     } else if (label.includes('工作天')) {
-      daysCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
+      if (assignBestCol('days', c, label === '工作天', isHiddenCol)) daysCol = c;
     } else if (label === '狀態' || label.includes('狀態')) {
-      statusCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
+      if (assignBestCol('status', c, label === '狀態', isHiddenCol)) statusCol = c;
     } else if (label === '排程' || label.includes('排程')) {
-      scheduleCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
-    } else if (label.toUpperCase() === 'EE') {
+      if (assignBestCol('schedule', c, label === '排程', isHiddenCol)) scheduleCol = c;
+    } else if (!eeCol && label.toUpperCase() === 'EE') {
       eeCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
-    } else if (label.toUpperCase() === 'ME') {
+    } else if (!meCol && label.toUpperCase() === 'ME') {
       meCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
-    } else if (label.includes('客戶')) {
+    } else if (!customerCol && label.includes('客戶')) {
       customerCol = c;
-      lastFixedCol = Math.max(lastFixedCol, c);
     }
   }
 
-  // Locate Day number row (typically headerRowIdx + 1)
   const calStartCol =
-    lastFixedCol > 0
-      ? Math.max(lastFixedCol + 1, scheduleCol > 0 ? scheduleCol + 1 : 0)
+    scheduleCol > 0
+      ? Math.max(scheduleCol + 1, Math.min(lastFixedCol + 1, scheduleCol + 4))
+      : lastFixedCol > 0
+      ? lastFixedCol + 1
       : 11;
   let dayRowIdx = headerRowIdx + 1;
   const totalCols = sheet.columnCount || 0;
 
   const probeDayValue = (rowIdx: number, colIdx: number): number | null => {
-    const rawVal = sheet.getCell(rowIdx, colIdx).value;
+    const rawVal = unwrapFormulaResult(sheet.getCell(rowIdx, colIdx).value);
     if (rawVal instanceof Date) return rawVal.getUTCDate();
-    if (
-      typeof rawVal === 'object' &&
-      rawVal !== null &&
-      'result' in rawVal &&
-      rawVal.result instanceof Date
-    ) {
-      return rawVal.result.getUTCDate();
+    if (typeof rawVal === 'number') {
+      if (rawVal > 30000 && rawVal < 80000) return excelSerialToDate(rawVal).getUTCDate();
+      if (Number.isInteger(rawVal) && rawVal >= 1 && rawVal <= 31) return rawVal;
+      return null;
     }
     const txt = cellValueToString(rawVal);
     if (/^\d{4}-\d{2}-\d{2}$/.test(txt)) return Number(txt.slice(8, 10));
@@ -453,18 +602,21 @@ function detectColumnsAndCalendar(
   };
 
   let foundDaysInNext = 0;
-  for (let c = calStartCol; c <= Math.min(totalCols, calStartCol + 20); c++) {
+  for (let c = calStartCol; c <= Math.min(totalCols, calStartCol + 25); c++) {
     if (probeDayValue(dayRowIdx, c) !== null) foundDaysInNext++;
   }
   if (foundDaysInNext === 0) {
     let foundDaysInHeader = 0;
-    for (let c = calStartCol; c <= Math.min(totalCols, calStartCol + 20); c++) {
+    for (let c = calStartCol; c <= Math.min(totalCols, calStartCol + 25); c++) {
       if (probeDayValue(headerRowIdx, c) !== null) foundDaysInHeader++;
     }
     if (foundDaysInHeader > 0) {
       dayRowIdx = headerRowIdx;
     }
   }
+
+  const monthRowIdx =
+    dayRowIdx === headerRowIdx && headerRowIdx > 1 ? headerRowIdx - 1 : headerRowIdx;
 
   const calendarCols: { col: number; dateStr: string }[] = [];
   let activeYear = baseYear;
@@ -473,13 +625,27 @@ function detectColumnsAndCalendar(
 
   for (let c = calStartCol; c <= totalCols; c++) {
     const dayCell = sheet.getCell(dayRowIdx, c);
-    const dayVal = dayCell.value;
+    const dayVal = unwrapFormulaResult(dayCell.value);
 
-    // If the calendar day cell itself is an Excel Date, extract YYYY-MM-DD directly
     if (dayVal instanceof Date) {
       const y = dayVal.getUTCFullYear();
       const m = dayVal.getUTCMonth() + 1;
       const d = dayVal.getUTCDate();
+      activeYear = y;
+      activeMonth = m;
+      prevMonth = m;
+      calendarCols.push({
+        col: c,
+        dateStr: `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+      });
+      continue;
+    }
+
+    if (typeof dayVal === 'number' && dayVal > 30000 && dayVal < 80000) {
+      const dt = excelSerialToDate(dayVal);
+      const y = dt.getUTCFullYear();
+      const m = dt.getUTCMonth() + 1;
+      const d = dt.getUTCDate();
       activeYear = y;
       activeMonth = m;
       prevMonth = m;
@@ -503,8 +669,7 @@ function detectColumnsAndCalendar(
     const dayNum = Number(dayRaw);
     if (!Number.isInteger(dayNum) || dayNum < 1 || dayNum > 31) continue;
 
-    // Month header usually lives in headerRowIdx (row 1)
-    const mCell = getEffectiveCell(sheet, headerRowIdx, c);
+    const mCell = getEffectiveCell(sheet, monthRowIdx, c);
     const mText = cellValueToString(mCell.value);
     const parsedMonth = parseMonthCellValue(mText, mCell.value, activeYear);
 
@@ -517,7 +682,6 @@ function detectColumnsAndCalendar(
       activeMonth = parsedMonth.month;
       prevMonth = parsedMonth.month;
     } else if (activeMonth !== null && dayNum === 1 && calendarCols.length > 0) {
-      // Month header missing on a boundary: advance month automatically
       if (activeMonth === 12) {
         activeMonth = 1;
         activeYear += 1;
@@ -584,11 +748,40 @@ function parseModelNameCell(raw: string): {
 function extractYearHint(filename: string, sheet: ExcelJS.Worksheet): number {
   const fnMatch = filename.match(/(20\d{2})/);
   if (fnMatch) return Number(fnMatch[1]);
-  for (let r = 1; r <= Math.min(sheet.rowCount || 5, 5); r++) {
-    for (let c = 1; c <= Math.min(sheet.columnCount || 30, 60); c++) {
-      const val = sheet.getCell(r, c).value;
+
+  // First locate header row to scan calendar headers accurately (even if header starts at row 31+)
+  let detectedHeaderRow = 1;
+  const maxScanRows = Math.min(Math.max(sheet.rowCount || 80, 80), 150);
+  let bestScore = 0;
+  for (let r = 1; r <= maxScanRows; r++) {
+    const sc = scoreHeaderRow(sheet, r);
+    if (sc > bestScore) {
+      bestScore = sc;
+      detectedHeaderRow = r;
+    }
+  }
+
+  const probeRows: number[] = [];
+  const addProbeRange = (from: number, to: number) => {
+    for (let r = Math.max(1, from); r <= Math.min(sheet.rowCount || to, to); r++) {
+      if (!probeRows.includes(r)) probeRows.push(r);
+    }
+  };
+  // Prioritize header + day rows, then just above header, then top sheet rows, then first few data rows
+  addProbeRange(detectedHeaderRow, detectedHeaderRow + 1);
+  addProbeRange(detectedHeaderRow - 3, detectedHeaderRow - 1);
+  addProbeRange(1, 10);
+  addProbeRange(detectedHeaderRow + 2, detectedHeaderRow + 10);
+
+  for (const r of probeRows) {
+    for (let c = 1; c <= Math.min(sheet.columnCount || 60, 160); c++) {
+      const val = unwrapFormulaResult(sheet.getCell(r, c).value);
       if (val instanceof Date) {
         const yr = val.getUTCFullYear();
+        if (yr >= 2000 && yr <= 2100) return yr;
+      }
+      if (typeof val === 'number' && val > 30000 && val < 80000) {
+        const yr = excelSerialToDate(val).getUTCFullYear();
         if (yr >= 2000 && yr <= 2100) return yr;
       }
       const txt = getMergedText(sheet, r, c);
@@ -596,6 +789,7 @@ function extractYearHint(filename: string, sheet: ExcelJS.Worksheet): number {
       if (m) return Number(m[1]);
     }
   }
+
   return new Date().getFullYear();
 }
 
@@ -618,24 +812,61 @@ export async function parseScheduleFromExcelBuffer(
     throw new Error('Excel 檔案內找不到任何工作表');
   }
 
-  const candidates: ParsedSheetCandidate[] = workbook.worksheets.map((ws) => {
+  interface SheetEvaluation {
+    ws: ExcelJS.Worksheet;
+    candidate: ParsedSheetCandidate;
+    score: number;
+  }
+
+  const evaluations: SheetEvaluation[] = workbook.worksheets.map((ws) => {
+    const isHidden = ws.state === 'hidden' || ws.state === 'veryHidden';
     const probeYear = options?.baseYearOverride ?? extractYearHint(filename, ws);
     const detected = detectColumnsAndCalendar(ws, probeYear);
+    let estimatedDataRows = 0;
+
+    if (detected && detected.modelCol > 0) {
+      const startR = Math.max(detected.headerRowIdx, detected.dayRowIdx) + 1;
+      for (let r = startR; r <= (ws.rowCount || 0); r++) {
+        if (getMergedText(ws, r, detected.modelCol) || getRawCellText(ws, r, detected.scheduleCol)) {
+          estimatedDataRows++;
+        }
+      }
+    }
+
+    const hasGantt = Boolean(detected && detected.calendarCols.length > 0);
+    const nameBonus =
+      ws.name.includes('專案排程追控') ||
+      ws.name.includes('總表') ||
+      ws.name.includes('排程')
+        ? 500
+        : 0;
+    const score =
+      (isHidden ? -1_000_000 : 0) +
+      (detected ? 10_000 : 0) +
+      (hasGantt ? 5_000 : 0) +
+      estimatedDataRows * 10 +
+      nameBonus;
+
     return {
-      name: ws.name,
-      rowCount: ws.rowCount,
-      hasGanttSchedule: Boolean(detected && detected.calendarCols.length > 0),
+      ws,
+      candidate: {
+        name: ws.name,
+        rowCount: ws.rowCount,
+        hasGanttSchedule: hasGantt,
+        isHidden,
+        estimatedDataRows,
+      },
+      score,
     };
   });
 
-  let selectedSheet =
+  const candidates = evaluations.map((e) => e.candidate);
+
+  const selectedSheet =
     (options?.targetSheetName
       ? workbook.getWorksheet(options.targetSheetName)
       : undefined) ||
-    workbook.worksheets.find((ws) => ws.name.includes('專案排程追控')) ||
-    workbook.worksheets.find(
-      (ws) => candidates.find((c) => c.name === ws.name)?.hasGanttSchedule
-    ) ||
+    [...evaluations].sort((a, b) => b.score - a.score)[0]?.ws ||
     workbook.worksheets[0];
 
   const detectedYear =
@@ -646,6 +877,11 @@ export async function parseScheduleFromExcelBuffer(
       `工作表「${selectedSheet.name}」找不到標準排程表頭欄位（需包含「機種名稱」與「任務名稱 / 排程」）`
     );
   }
+
+  const firstCalMonth =
+    cols.calendarCols.length > 0
+      ? Number(cols.calendarCols[0].dateStr.slice(5, 7))
+      : null;
 
   const holidayMap = buildHolidayMap(holidays);
   const dataStartRow = Math.max(cols.headerRowIdx, cols.dayRowIdx) + 1;
@@ -681,7 +917,6 @@ export async function parseScheduleFromExcelBuffer(
     const modelRawCurrent = getMergedText(selectedSheet, r, cols.modelCol);
     const seqRawCurrent = getMergedText(selectedSheet, r, cols.seqCol);
 
-    // Detect 2-row (預計 / 實際) task block vs 1-row fallback
     const taskMasterRowCurrent =
       cols.taskCol > 0 ? getEffectiveCell(selectedSheet, r, cols.taskCol).row : r;
     const taskMasterRowNext =
@@ -693,7 +928,6 @@ export async function parseScheduleFromExcelBuffer(
       schedLabelCurrent.includes('預計') && schedLabelNext.includes('實際');
     const isTwoRowTask = isLabelPair || isTaskMergedPair;
 
-    // Skip footer summary / legend rows or blank trailing rows
     const trimmedModelCur = modelRawCurrent.trim();
     const trimmedTaskCur = taskNameCurrent.trim();
     if (
@@ -707,13 +941,18 @@ export async function parseScheduleFromExcelBuffer(
     const rowStartVal = getRawCellText(selectedSheet, r, cols.startCol);
     const rowEndVal = getRawCellText(selectedSheet, r, cols.endCol);
     const rowPcbVal = getRawCellText(selectedSheet, r, cols.pcbCol);
+    const rowDaysVal = getRawCellText(selectedSheet, r, cols.daysCol);
+    const rowDoneVal = getRawCellText(selectedSheet, r, cols.doneCol);
+
     const hasAnyRowContent = Boolean(
       trimmedModelCur ||
         trimmedTaskCur ||
         schedLabelCurrent ||
         rowStartVal ||
         rowEndVal ||
-        rowPcbVal
+        rowPcbVal ||
+        rowDaysVal ||
+        rowDoneVal
     );
     if (!hasAnyRowContent) {
       r += 1;
@@ -721,7 +960,16 @@ export async function parseScheduleFromExcelBuffer(
     }
 
     const effectiveModelRaw = modelRawCurrent || lastModelRaw;
-    if (!effectiveModelRaw || (!trimmedTaskCur && !schedLabelCurrent && !rowStartVal)) {
+    if (
+      !effectiveModelRaw ||
+      (!trimmedModelCur &&
+        !trimmedTaskCur &&
+        !schedLabelCurrent &&
+        !rowStartVal &&
+        !rowEndVal &&
+        !rowPcbVal &&
+        !rowDaysVal)
+    ) {
       r += isTwoRowTask ? 2 : 1;
       continue;
     }
@@ -744,6 +992,26 @@ export async function parseScheduleFromExcelBuffer(
       lastSeqNo = null;
     }
     const effectiveSeq = hasSeq ? parsedSeq : lastSeqNo;
+
+    // Skip unnamed tasks or explicit template/sample placeholder rows
+    const isSampleModel =
+      /^(預設範例|範例機種|範例專案|範例|sample(\s*(model|project))?|example(\s*(model|project))?)$/i.test(
+        modelInfo.modelName.trim()
+      ) || /^預設範例/i.test(modelInfo.modelName.trim());
+    const isSampleTask =
+      /^(預設範例|範例任務|範例|sample(\s*task)?|example(\s*task)?)$/i.test(
+        trimmedTaskCur
+      ) || /^預設範例/i.test(trimmedTaskCur);
+
+    if (
+      !trimmedTaskCur ||
+      trimmedTaskCur === '未命名任務' ||
+      isSampleModel ||
+      isSampleTask
+    ) {
+      r += isTwoRowTask ? 2 : 1;
+      continue;
+    }
 
     if (modelKey !== prevRawModelKey) {
       totalRawModelSwitches++;
@@ -770,7 +1038,6 @@ export async function parseScheduleFromExcelBuffer(
       };
       bucketsByModelKey.set(modelKey, bucket);
     } else {
-      // Same model name merged into the same serial number (prefer smallest valid seqNo)
       if (effectiveSeq !== null) {
         bucket.seqNo =
           bucket.seqNo === null ? effectiveSeq : Math.min(bucket.seqNo, effectiveSeq);
@@ -785,33 +1052,39 @@ export async function parseScheduleFromExcelBuffer(
     const planRow = r;
     const actualRow = isTwoRowTask ? r + 1 : -1;
 
-    // 任務名稱 & stage/category
-    const finalTaskName = (taskNameCurrent || '未命名任務').replace(/^PVT/i, 'MVT');
+    const finalTaskName = trimmedTaskCur.replace(/^PVT/i, 'MVT');
     const { stage, stageIteration, taskCategory } = inferStageAndCategory(finalTaskName);
 
-    // 完成 checkbox / green task highlight
     const doneRaw = getMergedText(selectedSheet, planRow, cols.doneCol);
+    const doneVal =
+      cols.doneCol > 0
+        ? unwrapFormulaResult(getEffectiveCell(selectedSheet, planRow, cols.doneCol).value)
+        : null;
     const doneUpper = doneRaw.toUpperCase();
     const taskCellGreen =
       cols.taskCol > 0
         ? isGreenCompletionCell(getEffectiveCell(selectedSheet, planRow, cols.taskCol))
         : false;
     const completed =
+      doneVal instanceof Date ||
+      (typeof doneVal === 'number' && doneVal > 30000 && doneVal < 80000) ||
       doneRaw.includes('☑') ||
       doneRaw.includes('✓') ||
       doneRaw.includes('✔') ||
+      doneRaw.includes('✅') ||
+      doneRaw.includes('☑️') ||
       doneUpper === 'TRUE' ||
       doneUpper === 'YES' ||
       doneUpper === 'Y' ||
+      doneUpper === 'V' ||
       doneRaw === '是' ||
       doneRaw === '1' ||
+      /^\d{4}-\d{2}-\d{2}$/.test(doneRaw) ||
       taskCellGreen;
 
-    // 狀態 (O / C / NA)
     const statusRaw = getMergedText(selectedSheet, planRow, cols.statusCol);
     const status = parseTaskStatus(statusRaw, completed);
 
-    // PCB數量 / 試產備註
     const pcbMaster =
       cols.pcbCol > 0 ? getEffectiveCell(selectedSheet, planRow, cols.pcbCol) : null;
     const pcbTopText = getRawCellText(selectedSheet, planRow, cols.pcbCol);
@@ -837,65 +1110,72 @@ export async function parseScheduleFromExcelBuffer(
       (pcbTopText !== '' && !topIsNumeric)
     ) {
       pcbMode = 'note';
-      pilotNote = pcbMaster ? cellValueToString(pcbMaster.value) : '';
+      pilotNote = pcbMaster ? getMergedText(selectedSheet, planRow, cols.pcbCol) : '';
     } else {
       pcbMode = 'qty';
       plannedQty = topIsNumeric ? Number(pcbTopText) : null;
       actualQty = bottomIsNumeric ? Number(pcbBottomText) : null;
     }
 
-    // Dates from 開始 / 結束 columns
-    let plannedStart =
+    const pStartMeta =
       cols.startCol > 0
-        ? parseExcelDateValue(
+        ? parseExcelDateWithMeta(
             selectedSheet.getCell(planRow, cols.startCol).value,
             detectedYear
           )
-        : '';
-    let plannedEnd =
+        : { dateStr: '', hasExplicitYear: false };
+    const pEndMeta =
       cols.endCol > 0
-        ? parseExcelDateValue(
+        ? parseExcelDateWithMeta(
             selectedSheet.getCell(planRow, cols.endCol).value,
             detectedYear
           )
-        : '';
-    let actualStart =
+        : { dateStr: '', hasExplicitYear: false };
+    const aStartMeta =
       actualRow > 0 && cols.startCol > 0
-        ? parseExcelDateValue(
+        ? parseExcelDateWithMeta(
             selectedSheet.getCell(actualRow, cols.startCol).value,
             detectedYear
           )
-        : '';
-    let actualEnd =
+        : { dateStr: '', hasExplicitYear: false };
+    const aEndMeta =
       actualRow > 0 && cols.endCol > 0
-        ? parseExcelDateValue(
+        ? parseExcelDateWithMeta(
             selectedSheet.getCell(actualRow, cols.endCol).value,
             detectedYear
           )
-        : '';
+        : { dateStr: '', hasExplicitYear: false };
 
-    // 工作天 manual fallback
+    let { start: plannedStart, end: plannedEnd } = adjustCrossYearPair(
+      pStartMeta,
+      pEndMeta,
+      firstCalMonth
+    );
+    let { start: actualStart, end: actualEnd } = adjustCrossYearPair(
+      aStartMeta,
+      aEndMeta,
+      firstCalMonth
+    );
+
     const pDaysText = getRawCellText(selectedSheet, planRow, cols.daysCol);
     const aDaysText =
       actualRow > 0 ? getRawCellText(selectedSheet, actualRow, cols.daysCol) : '';
     const manualPlannedDays = /^\d+$/.test(pDaysText) ? Number(pDaysText) : null;
     const manualActualDays = /^\d+$/.test(aDaysText) ? Number(aDaysText) : null;
 
-    // Scan Gantt Calendar Fills on 預計 & 實際 rows
     const plannedFillDates: string[] = [];
     const activeActualDates: string[] = [];
     const grayActualDates: string[] = [];
     const dailyOverrides: Record<string, DailyOverrideType> = {};
 
     for (const cal of cols.calendarCols) {
-      // Planned row bar
-      const pFillRgb = extractFillRgb(selectedSheet.getCell(planRow, cal.col));
-      if (classifyPlannedFill(pFillRgb)) {
+      const pCell = selectedSheet.getCell(planRow, cal.col);
+      const pFillRgb = extractFillRgb(pCell);
+      if (classifyPlannedFill(pFillRgb) || hasColoredPlannedBorder(pCell)) {
         plannedFillDates.push(cal.dateStr);
         paintedPlannedCells++;
       }
 
-      // Actual row fills
       if (actualRow > 0) {
         const aFillRgb = extractFillRgb(selectedSheet.getCell(actualRow, cal.col));
         const aClass = classifyActualFill(aFillRgb);
@@ -909,7 +1189,6 @@ export async function parseScheduleFromExcelBuffer(
       }
     }
 
-    // Reconcile start/end dates with painted Gantt cells
     if ((!plannedStart || !plannedEnd) && plannedFillDates.length > 0) {
       plannedFillDates.sort();
       if (!plannedStart) plannedStart = plannedFillDates[0];
@@ -922,14 +1201,14 @@ export async function parseScheduleFromExcelBuffer(
       if (!actualEnd) actualEnd = activeActualDates[activeActualDates.length - 1];
     }
 
-    // Mark gray cells on working days inside actual range as explicit 'pause'
     for (const gDate of grayActualDates) {
-      const insideActualSpan =
+      const insideKnownSpan =
         Boolean(actualStart && actualEnd && gDate >= actualStart && gDate <= actualEnd) ||
+        Boolean(plannedStart && plannedEnd && gDate >= plannedStart && gDate <= plannedEnd) ||
         (activeActualDates.length > 0 &&
           gDate >= activeActualDates[0] &&
           gDate <= activeActualDates[activeActualDates.length - 1]);
-      if (!insideActualSpan) continue;
+      if (!insideKnownSpan) continue;
       const [gy, gm, gd] = gDate.split('-').map(Number);
       const dow = new Date(gy, gm - 1, gd).getDay();
       const isWorking = isWorkingCalendarDay(
@@ -971,8 +1250,9 @@ export async function parseScheduleFromExcelBuffer(
     r += isTwoRowTask ? 2 : 1;
   }
 
-  // Sort models by seqNo ascending (assigning sequential seqNo for any unnumbered items)
-  const rawBuckets = Array.from(bucketsByModelKey.values());
+  const rawBuckets = Array.from(bucketsByModelKey.values()).filter(
+    (b) => b.tasks.length > 0
+  );
   const maxExplicitSeq = rawBuckets.reduce(
     (max, b) => (b.seqNo !== null ? Math.max(max, b.seqNo) : max),
     0

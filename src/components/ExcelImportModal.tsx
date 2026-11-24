@@ -124,7 +124,12 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                   {result.availableSheets.map((ws) => (
                     <option key={ws.name} value={ws.name}>
                       {ws.name}
-                      {ws.hasGanttSchedule ? ' (含甘特排程)' : ''}
+                      {ws.isHidden ? ' [隱藏]' : ''}
+                      {ws.hasGanttSchedule
+                        ? ` (含甘特排程 · ${ws.estimatedDataRows}列)`
+                        : ws.estimatedDataRows > 0
+                        ? ` (${ws.estimatedDataRows}列)`
+                        : ''}
                     </option>
                   ))}
                 </select>

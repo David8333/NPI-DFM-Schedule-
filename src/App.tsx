@@ -48,6 +48,7 @@ import {
   STORAGE_KEY_FACTORY_CLEANUP,
   STORAGE_KEY_HOLIDAYS,
   STORAGE_KEY_PROJECTS,
+  STORAGE_KEY_SAMPLE_PROJECTS_CLEANUP,
   STORAGE_KEY_TW_SEED,
 } from './utils/storage';
 import { exportScheduleToExcel } from './utils/excelExport';
@@ -95,6 +96,22 @@ const normalizeProjects = (list: unknown[]): ProjectModel[] => {
   });
 };
 
+const isUntouchedSampleProjects = (list: ProjectModel[]): boolean => {
+  if (list.length !== INITIAL_PROJECTS.length) return false;
+  return list.every((proj, idx) => {
+    const sample = INITIAL_PROJECTS[idx];
+    return (
+      proj.id === sample.id &&
+      proj.modelName === sample.modelName &&
+      proj.tasks.length === sample.tasks.length &&
+      proj.tasks.every(
+        (t, tIdx) =>
+          t.id === sample.tasks[tIdx].id && t.taskName === sample.tasks[tIdx].taskName
+      )
+    );
+  });
+};
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<ActiveTab>('schedule');
 
@@ -102,20 +119,31 @@ export default function App() {
   const hasUserMutatedProjectsRef = useRef(false);
   const hasUserMutatedHolidaysRef = useRef(false);
   const lastDragUndoRef = useRef(0);
+  const shouldClearUntouchedSamplesOnIdbRef = useRef(false);
 
   const [projects, setProjects] = useState<ProjectModel[]>(() => {
     try {
+      const cleanedDefaultSamples =
+        localStorage.getItem(STORAGE_KEY_SAMPLE_PROJECTS_CLEANUP) === '1';
+      if (!cleanedDefaultSamples) {
+        shouldClearUntouchedSamplesOnIdbRef.current = true;
+        localStorage.setItem(STORAGE_KEY_SAMPLE_PROJECTS_CLEANUP, '1');
+      }
       const saved = localStorage.getItem(STORAGE_KEY_PROJECTS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return normalizeProjects(parsed);
+        if (Array.isArray(parsed)) {
+          const normalized = normalizeProjects(parsed);
+          if (!cleanedDefaultSamples && isUntouchedSampleProjects(normalized)) {
+            return [];
+          }
+          return normalized;
         }
       }
     } catch {
       // ignore storage errors; IndexedDB hydration runs on mount
     }
-    return INITIAL_PROJECTS;
+    return [];
   });
 
   const [holidays, setHolidays] = useState<HolidayItem[]>(() => {
@@ -161,8 +189,17 @@ export default function App() {
       ]);
       if (cancelled) return;
 
-      if (!hasUserMutatedProjectsRef.current && Array.isArray(idbProjects) && idbProjects.length > 0) {
-        setProjects(normalizeProjects(idbProjects));
+      if (!hasUserMutatedProjectsRef.current && Array.isArray(idbProjects)) {
+        const normalized = normalizeProjects(idbProjects);
+        if (
+          shouldClearUntouchedSamplesOnIdbRef.current &&
+          isUntouchedSampleProjects(normalized)
+        ) {
+          setProjects([]);
+          savePersistedProjects([]);
+        } else {
+          setProjects(normalized);
+        }
       }
       if (!hasUserMutatedHolidaysRef.current && Array.isArray(idbHolidays) && idbHolidays.length > 0) {
         const alreadySeeded = localStorage.getItem(STORAGE_KEY_TW_SEED) === '1';
