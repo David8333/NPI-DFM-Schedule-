@@ -29,6 +29,7 @@ export interface ScheduleTask {
   owner?: string;
   remark?: string;
   dailyOverrides?: Record<string, DailyOverrideType>;
+  explicitActualDailyOnly?: boolean;
 }
 
 export interface ProjectModel {

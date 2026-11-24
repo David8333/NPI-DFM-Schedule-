@@ -132,6 +132,7 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
     setDraft((prev) => {
       const nextOverrides = { ...(prev.dailyOverrides || {}) };
       if (
+        !prev.explicitActualDailyOnly &&
         prev.actualStart &&
         prev.actualEnd &&
         dateStr >= prev.actualStart &&
@@ -154,6 +155,7 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
       ...prev,
       actualStart: prev.plannedStart,
       actualEnd: prev.plannedEnd,
+      explicitActualDailyOnly: false,
     }));
   };
 
@@ -164,6 +166,7 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
       actualEnd: '',
       manualActualDays: 0,
       dailyOverrides: {},
+      explicitActualDailyOnly: false,
     }));
   };
 

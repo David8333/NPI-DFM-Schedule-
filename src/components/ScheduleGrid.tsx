@@ -1232,10 +1232,8 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                           cellBg = classicColors
                             ? 'bg-[#f40058] hover:brightness-95'
                             : 'bg-rose-500 hover:bg-rose-600';
-                        } else if (aState === 'non_working_span') {
-                          cellBg = 'bg-slate-300/90';
-                        } else if (aState === 'pause') {
-                          cellBg = 'bg-slate-100';
+                        } else if (aState === 'non_working_span' || aState === 'pause') {
+                          cellBg = 'bg-slate-300/90 hover:bg-slate-400/70';
                         } else if (calEntry?.type === 'makeup_workday') {
                           cellBg = 'bg-teal-50/60 hover:bg-teal-100/50';
                         } else if (calEntry?.type === 'event') {

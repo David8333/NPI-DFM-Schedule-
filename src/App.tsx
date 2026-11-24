@@ -625,7 +625,12 @@ export default function App() {
             if (t.id !== taskId) return t;
             return field === 'planned'
               ? { ...t, plannedStart: start, plannedEnd: end }
-              : { ...t, actualStart: start, actualEnd: end };
+              : {
+                  ...t,
+                  actualStart: start,
+                  actualEnd: end,
+                  explicitActualDailyOnly: false,
+                };
           }),
         };
       })
@@ -656,7 +661,7 @@ export default function App() {
                 dateStr <= t.actualEnd;
 
               if (value === 'clear') {
-                if (insideActualRange) {
+                if (insideActualRange && !t.explicitActualDailyOnly) {
                   nextMap[dateStr] = 'pause';
                 } else {
                   delete nextMap[dateStr];

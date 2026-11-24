@@ -233,6 +233,22 @@ function hasColoredPlannedBorder(cell: ExcelJS.Cell): boolean {
   return isAccentEdge(border.top) && isAccentEdge(border.bottom);
 }
 
+function classifyActualCode(cell: ExcelJS.Cell): DailyOverrideType | null {
+  const raw = unwrapFormulaResult(cell.value);
+  if (raw === null || raw === undefined) return null;
+  const num =
+    typeof raw === 'number'
+      ? raw
+      : typeof raw === 'string' && /^\d+$/.test(raw.trim())
+      ? Number(raw.trim())
+      : null;
+  if (num === 2) return 'work';   // 2 = 正常綠
+  if (num === 3) return 'delay';  // 3 = 超期紅
+  if (num === 4) return 'pause';  // 4 = 停工灰
+  if (num === 5) return 'pilot';  // 5 = 試產確認
+  return null;
+}
+
 function classifyActualFill(
   rgb: [number, number, number] | null
 ): 'pilot' | 'work' | 'delay' | 'gray' | null {
@@ -1177,14 +1193,25 @@ export async function parseScheduleFromExcelBuffer(
       }
 
       if (actualRow > 0) {
-        const aFillRgb = extractFillRgb(selectedSheet.getCell(actualRow, cal.col));
-        const aClass = classifyActualFill(aFillRgb);
-        if (aClass === 'pilot' || aClass === 'work' || aClass === 'delay') {
-          dailyOverrides[cal.dateStr] = aClass;
+        const aCell = selectedSheet.getCell(actualRow, cal.col);
+        const codeClass = classifyActualCode(aCell);
+        if (codeClass === 'pilot' || codeClass === 'work' || codeClass === 'delay') {
+          dailyOverrides[cal.dateStr] = codeClass;
           activeActualDates.push(cal.dateStr);
           paintedActualCells++;
-        } else if (aClass === 'gray') {
-          grayActualDates.push(cal.dateStr);
+        } else if (codeClass === 'pause') {
+          dailyOverrides[cal.dateStr] = 'pause';
+          paintedActualCells++;
+        } else {
+          const aFillRgb = extractFillRgb(aCell);
+          const aClass = classifyActualFill(aFillRgb);
+          if (aClass === 'pilot' || aClass === 'work' || aClass === 'delay') {
+            dailyOverrides[cal.dateStr] = aClass;
+            activeActualDates.push(cal.dateStr);
+            paintedActualCells++;
+          } else if (aClass === 'gray') {
+            grayActualDates.push(cal.dateStr);
+          }
         }
       }
     }
@@ -1202,6 +1229,7 @@ export async function parseScheduleFromExcelBuffer(
     }
 
     for (const gDate of grayActualDates) {
+      if (dailyOverrides[gDate]) continue;
       const insideKnownSpan =
         Boolean(actualStart && actualEnd && gDate >= actualStart && gDate <= actualEnd) ||
         Boolean(plannedStart && plannedEnd && gDate >= plannedStart && gDate <= plannedEnd) ||
@@ -1238,12 +1266,11 @@ export async function parseScheduleFromExcelBuffer(
       actualEnd,
       manualPlannedDays: !plannedStart && !plannedEnd ? manualPlannedDays : undefined,
       manualActualDays:
-        !actualStart && !actualEnd && Object.keys(dailyOverrides).length === 0
-          ? manualActualDays
-          : undefined,
+        Object.keys(dailyOverrides).length === 0 ? manualActualDays : undefined,
       status,
       dailyOverrides:
         Object.keys(dailyOverrides).length > 0 ? dailyOverrides : undefined,
+      explicitActualDailyOnly: true,
     };
 
     bucket.tasks.push(task);

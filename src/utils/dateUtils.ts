@@ -238,7 +238,7 @@ export function getEffectiveActualDates(
   );
   const countedDates = new Set<string>();
 
-  if (hasRange) {
+  if (hasRange && !task.explicitActualDailyOnly) {
     const days = generateCalendarDays(task.actualStart, task.actualEnd);
     for (const d of days) {
       const ov = overrides[d.dateStr];
@@ -301,7 +301,7 @@ export function computeActualWorkingDays(
 ): number {
   const overrides = task.dailyOverrides || {};
   const hasRange = Boolean(task.actualStart && task.actualEnd);
-  if (!hasRange && Object.keys(overrides).length === 0) {
+  if ((!hasRange || task.explicitActualDailyOnly) && Object.keys(overrides).length === 0) {
     return task.manualActualDays ?? 0;
   }
   return getEffectiveActualDates(task, holidayMap).size;
@@ -441,6 +441,8 @@ export function getActualCellState(
   if (override === 'pilot') return 'pilot_blue';
   if (override === 'work') return 'on_time';
   if (override === 'delay') return 'delay';
+
+  if (task.explicitActualDailyOnly) return 'empty';
 
   if (!task.actualStart || !task.actualEnd) return 'empty';
   if (task.actualStart > task.actualEnd) return 'empty';
