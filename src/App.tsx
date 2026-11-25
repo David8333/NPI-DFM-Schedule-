@@ -28,6 +28,7 @@ import {
   TAIWAN_HOLIDAY_YEARS,
 } from './data/taiwanHolidays';
 import {
+  applySingleActualDateChange,
   buildDefaultExportFilename,
   buildHolidayMap,
   computeActualWorkingDaysInRange,
@@ -422,8 +423,9 @@ export default function App() {
       .sort((a, b) => a.seqNo - b.seqNo);
   }, [projects, searchQuery, stageFilter, statusFilter]);
 
+  const holidayMap = useMemo(() => buildHolidayMap(holidays), [holidays]);
+
   const summaryStats = useMemo(() => {
-    const holidayMap = buildHolidayMap(holidays);
     let totalTasks = 0;
     let openCount = 0;
     let completedCount = 0;
@@ -470,7 +472,7 @@ export default function App() {
       plannedPcbTotal,
       actualPcbTotal,
     };
-  }, [filteredProjects, holidays, referenceToday, startDate, endDate]);
+  }, [filteredProjects, holidayMap, referenceToday, startDate, endDate]);
 
   const handleToggleTaskCompleted = (projectId: string, taskId: string) => {
     mutateProjects((prev) =>
@@ -652,25 +654,11 @@ export default function App() {
           if (p.id !== projectId) return p;
           return {
             ...p,
-            tasks: p.tasks.map((t) => {
-              if (t.id !== taskId) return t;
-              const nextMap = { ...(t.dailyOverrides || {}) };
-              const insideActualRange =
-                Boolean(t.actualStart && t.actualEnd) &&
-                dateStr >= t.actualStart &&
-                dateStr <= t.actualEnd;
-
-              if (value === 'clear') {
-                if (insideActualRange && !t.explicitActualDailyOnly) {
-                  nextMap[dateStr] = 'pause';
-                } else {
-                  delete nextMap[dateStr];
-                }
-              } else {
-                nextMap[dateStr] = value;
-              }
-              return { ...t, dailyOverrides: nextMap };
-            }),
+            tasks: p.tasks.map((t) =>
+              t.id === taskId
+                ? applySingleActualDateChange(t, dateStr, value, holidayMap)
+                : t
+            ),
           };
         }),
       { recordUndo: true, groupDragUndo: true }

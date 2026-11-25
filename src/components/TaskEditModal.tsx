@@ -15,10 +15,12 @@ import {
   formatStageTaskName,
 } from '../data/npiCatalog';
 import {
+  applySingleActualDateChange,
   buildHolidayMap,
   computeActualWorkingDays,
   computePlannedWorkingDays,
   getEffectiveActualDates,
+  getEffectiveActualRangeDisplay,
   getTaskCategory,
 } from '../utils/dateUtils';
 
@@ -39,10 +41,15 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
   onSave,
   onDeleteTask,
 }) => {
-  const [draft, setDraft] = useState<ScheduleTask>(() => ({
-    ...task,
-    taskCategory: getTaskCategory(task),
-  }));
+  const [draft, setDraft] = useState<ScheduleTask>(() => {
+    const eff = getEffectiveActualRangeDisplay(task);
+    return {
+      ...task,
+      actualStart: task.actualStart || eff.start,
+      actualEnd: task.actualEnd || eff.end,
+      taskCategory: getTaskCategory(task),
+    };
+  });
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [singleActualDate, setSingleActualDate] = useState('');
   const [singleActualPaintType, setSingleActualPaintType] = useState<DailyOverrideType>(() =>
@@ -119,34 +126,20 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
 
   const handleAddSingleActualDay = () => {
     if (!singleActualDate) return;
-    setDraft((prev) => ({
-      ...prev,
-      dailyOverrides: {
-        ...(prev.dailyOverrides || {}),
-        [singleActualDate]: singleActualPaintType,
-      },
-    }));
+    setDraft((prev) =>
+      applySingleActualDateChange(
+        prev,
+        singleActualDate,
+        singleActualPaintType,
+        holidayMap
+      )
+    );
   };
 
   const handleRemoveActualDay = (dateStr: string) => {
-    setDraft((prev) => {
-      const nextOverrides = { ...(prev.dailyOverrides || {}) };
-      if (
-        !prev.explicitActualDailyOnly &&
-        prev.actualStart &&
-        prev.actualEnd &&
-        dateStr >= prev.actualStart &&
-        dateStr <= prev.actualEnd
-      ) {
-        nextOverrides[dateStr] = 'pause';
-      } else {
-        delete nextOverrides[dateStr];
-      }
-      return {
-        ...prev,
-        dailyOverrides: nextOverrides,
-      };
-    });
+    setDraft((prev) =>
+      applySingleActualDateChange(prev, dateStr, 'clear', holidayMap)
+    );
   };
 
   const handleCopyPlannedToActual = () => {
@@ -487,7 +480,13 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
                   <input
                     type="date"
                     value={draft.actualStart}
-                    onChange={(e) => setDraft({ ...draft, actualStart: e.target.value })}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        actualStart: e.target.value,
+                        explicitActualDailyOnly: false,
+                      })
+                    }
                     className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-300 rounded-md"
                   />
                 </div>
@@ -496,7 +495,13 @@ export const TaskEditModal: React.FC<TaskEditModalProps> = ({
                   <input
                     type="date"
                     value={draft.actualEnd}
-                    onChange={(e) => setDraft({ ...draft, actualEnd: e.target.value })}
+                    onChange={(e) =>
+                      setDraft({
+                        ...draft,
+                        actualEnd: e.target.value,
+                        explicitActualDailyOnly: false,
+                      })
+                    }
                     className="w-full px-2.5 py-1.5 text-xs font-mono bg-white border border-slate-300 rounded-md"
                   />
                 </div>

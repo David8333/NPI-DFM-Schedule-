@@ -1,4 +1,4 @@
-import { HolidayItem, ProjectModel, ScheduleTask, TaskCategory } from '../types/schedule';
+import { DailyOverrideType, HolidayItem, ProjectModel, ScheduleTask, TaskCategory } from '../types/schedule';
 
 export interface CalendarDay {
   dateStr: string; // YYYY-MM-DD
@@ -265,13 +265,22 @@ export function getEffectiveActualDates(
 export function getEffectiveActualRangeDisplay(
   task: ScheduleTask
 ): { start: string; end: string } {
-  if (task.actualStart && task.actualEnd) {
-    return { start: task.actualStart, end: task.actualEnd };
-  }
   const activeDates = Object.entries(task.dailyOverrides || {})
     .filter(([, ov]) => ov === 'work' || ov === 'delay' || ov === 'pilot')
     .map(([dateStr]) => dateStr)
     .sort();
+  if (task.actualStart && task.actualEnd) {
+    if (activeDates.length > 0 && !task.explicitActualDailyOnly) {
+      return {
+        start: activeDates[0] < task.actualStart ? activeDates[0] : task.actualStart,
+        end:
+          activeDates[activeDates.length - 1] > task.actualEnd
+            ? activeDates[activeDates.length - 1]
+            : task.actualEnd,
+      };
+    }
+    return { start: task.actualStart, end: task.actualEnd };
+  }
   if (activeDates.length > 0) {
     return {
       start: task.actualStart || activeDates[0],
@@ -468,6 +477,54 @@ export function getActualCellState(
   }
 
   return 'on_time';
+}
+
+export function applySingleActualDateChange(
+  task: ScheduleTask,
+  dateStr: string,
+  value: DailyOverrideType | 'clear',
+  holidayMap: Map<string, HolidayItem>
+): ScheduleTask {
+  const nextOverrides: Record<string, DailyOverrideType> = {
+    ...(task.dailyOverrides || {}),
+  };
+
+  if (
+    !task.explicitActualDailyOnly &&
+    task.actualStart &&
+    task.actualEnd &&
+    task.actualStart <= task.actualEnd
+  ) {
+    const spanDays = generateCalendarDays(task.actualStart, task.actualEnd);
+    if (spanDays.length <= 1500) {
+      for (const d of spanDays) {
+        if (nextOverrides[d.dateStr]) continue;
+        const st = getActualCellState(d, task, holidayMap);
+        if (st === 'on_time') nextOverrides[d.dateStr] = 'work';
+        else if (st === 'delay') nextOverrides[d.dateStr] = 'delay';
+        else if (st === 'pilot_blue') nextOverrides[d.dateStr] = 'pilot';
+      }
+    }
+  }
+
+  if (value === 'clear') {
+    delete nextOverrides[dateStr];
+  } else {
+    nextOverrides[dateStr] = value;
+  }
+
+  const activeDates = Object.entries(nextOverrides)
+    .filter(([, ov]) => ov === 'work' || ov === 'delay' || ov === 'pilot')
+    .map(([d]) => d)
+    .sort();
+
+  return {
+    ...task,
+    actualStart: activeDates.length > 0 ? activeDates[0] : '',
+    actualEnd: activeDates.length > 0 ? activeDates[activeDates.length - 1] : '',
+    dailyOverrides: nextOverrides,
+    explicitActualDailyOnly: true,
+  };
 }
 
 export function isTaskDelayedOrWarning(
