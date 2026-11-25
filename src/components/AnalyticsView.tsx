@@ -38,8 +38,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
     let totalTasks = 0;
     let completedTasks = 0;
     let openStatusTasks = 0;
-    let totalPlannedDays = 0;
-    let totalActualDays = 0;
     let totalPlannedPcb = 0;
     let totalActualPcb = 0;
 
@@ -82,8 +80,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         const fullPlannedDays = computePlannedWorkingDays(t, holidayMap);
         const fullActualDays = computeActualWorkingDays(t, holidayMap);
         const effRange = getEffectiveActualRangeDisplay(t);
-        totalPlannedDays += pDays;
-        totalActualDays += aDays;
         mPlan += pDays;
         mActual += aDays;
 
@@ -128,8 +124,6 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
       totalTasks,
       completedTasks,
       openStatusTasks,
-      totalPlannedDays,
-      totalActualDays,
       totalPlannedPcb,
       totalActualPcb,
       warnings,
@@ -145,7 +139,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
   return (
     <div className="space-y-8">
       {/* Top KPI Grid (Single-Elevation, Clean Dividers) */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 bg-white border border-slate-200 rounded-lg divide-y lg:divide-y-0 lg:divide-x divide-slate-200">
+      <div className="grid grid-cols-1 md:grid-cols-3 bg-white border border-slate-200 rounded-lg divide-y md:divide-y-0 md:divide-x divide-slate-200">
         <div className="p-5">
           <p className="text-xs font-medium text-slate-500">追控任務完成率</p>
           <p className="mt-2 text-2xl font-bold font-mono text-slate-900 tabular-nums">
@@ -157,26 +151,12 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
         </div>
 
         <div className="p-5">
-          <p className="text-xs font-medium text-slate-500">待結案追控項 (狀態 O)</p>
+          <p className="text-xs font-medium text-slate-500">待結案追控項 (任務狀態 O)</p>
           <p className="mt-2 text-2xl font-bold font-mono text-rose-700 tabular-nums">
             {stats.openStatusTasks}
           </p>
           <p className="mt-1 text-xs text-slate-500">
             涵蓋 {projects.length} 款硬體研發機種
-          </p>
-        </div>
-
-        <div className="p-5">
-          <p className="text-xs font-medium text-slate-500">總工作天數（預計 / 實際）</p>
-          <p className="mt-2 text-2xl font-bold font-mono text-slate-900 tabular-nums">
-            {stats.totalPlannedDays}{' '}
-            <span className="text-sm font-normal text-slate-400">/</span>{' '}
-            <span className="text-emerald-700">{stats.totalActualDays}</span>
-          </p>
-          <p className="mt-1 text-xs text-slate-500 font-mono tabular-nums">
-            區間 {startDate} ~ {endDate} · 差額{' '}
-            {stats.totalActualDays - stats.totalPlannedDays >= 0 ? '+' : ''}
-            {stats.totalActualDays - stats.totalPlannedDays} 天
           </p>
         </div>
 

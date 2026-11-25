@@ -281,8 +281,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     <th className="py-2.5 px-2.5 text-center w-24 border-r border-slate-200">
                       PCB數量
                     </th>
-                    <th className="py-2.5 px-2 text-center w-12 border-r border-slate-200">
-                      完成
+                    <th className="py-2.5 px-2 text-center w-20 border-r border-slate-200 whitespace-nowrap">
+                      問題點結案
                     </th>
                     <th className="py-2.5 px-2.5 text-center w-32 border-r border-slate-200">
                       預計 (起~迄)
@@ -293,8 +293,8 @@ export const ExcelImportModal: React.FC<ExcelImportModalProps> = ({
                     <th className="py-2.5 px-2 text-center w-20 border-r border-slate-200">
                       工作天
                     </th>
-                    <th className="py-2.5 px-2 text-center w-14 border-r border-slate-200">
-                      狀態
+                    <th className="py-2.5 px-2 text-center w-20 border-r border-slate-200 whitespace-nowrap">
+                      任務狀態
                     </th>
                     <th className="py-2.5 px-2 text-center w-20">填充格</th>
                   </tr>

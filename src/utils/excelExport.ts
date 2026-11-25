@@ -60,11 +60,11 @@ export async function exportScheduleToExcel(
     { title: '機種名稱', width: 22 },
     { title: '任務名稱', width: 20 },
     { title: 'PCB數量', width: 14 },
-    { title: '完成', width: 7 },
+    { title: '問題點結案', width: 10 },
     { title: '開始', width: 11 },
     { title: '結束', width: 11 },
     { title: '工作天', width: 9 },
-    { title: '狀態', width: 8 },
+    { title: '任務狀態', width: 10 },
     { title: '排程', width: 10 },
   ];
 
@@ -530,8 +530,8 @@ export async function exportScheduleToExcel(
       { header: '預計工作天', key: 'planDays', width: 12 },
       { header: '實際工作天', key: 'actualDays', width: 12 },
       { header: '工時差異', key: 'diffDays', width: 12 },
-      { header: '狀態', key: 'status', width: 10 },
-      { header: '完成', key: 'completed', width: 10 },
+      { header: '任務狀態', key: 'status', width: 10 },
+      { header: '問題點結案', key: 'completed', width: 12 },
       { header: '追控備註', key: 'remark', width: 34 },
     ];
 

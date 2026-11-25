@@ -607,13 +607,14 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                 style={!compactSticky ? { left: 412 } : undefined}
                 className={`${
                   !compactSticky ? headerStickyBase : 'sticky z-30'
-                } top-0 w-[44px] min-w-[44px] max-w-[44px] bg-slate-100 text-slate-800 font-semibold border-b border-r border-slate-300 text-center`}
+                } top-0 w-[56px] min-w-[56px] max-w-[56px] bg-slate-100 text-slate-800 font-semibold border-b border-r border-slate-300 text-center px-1 leading-tight`}
               >
-                完成
+                <span className="block whitespace-nowrap">問題點</span>
+                <span className="block whitespace-nowrap">結案</span>
               </th>
               <th
                 rowSpan={2}
-                style={!compactSticky ? { left: 456 } : undefined}
+                style={!compactSticky ? { left: 468 } : undefined}
                 className={`${
                   !compactSticky ? headerStickyBase : 'sticky z-30'
                 } top-0 w-[70px] min-w-[70px] max-w-[70px] bg-slate-100 text-slate-800 font-semibold border-b border-r border-slate-300 text-center`}
@@ -622,7 +623,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
               </th>
               <th
                 rowSpan={2}
-                style={!compactSticky ? { left: 526 } : undefined}
+                style={!compactSticky ? { left: 538 } : undefined}
                 className={`${
                   !compactSticky ? headerStickyBase : 'sticky z-30'
                 } top-0 w-[70px] min-w-[70px] max-w-[70px] bg-slate-100 text-slate-800 font-semibold border-b border-r border-slate-300 text-center`}
@@ -631,7 +632,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
               </th>
               <th
                 rowSpan={2}
-                style={!compactSticky ? { left: 596 } : undefined}
+                style={!compactSticky ? { left: 608 } : undefined}
                 className={`${
                   !compactSticky ? headerStickyBase : 'sticky z-30'
                 } top-0 w-[52px] min-w-[52px] max-w-[52px] bg-slate-100 text-slate-800 font-semibold border-b border-r border-slate-300 text-center`}
@@ -640,16 +641,17 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
               </th>
               <th
                 rowSpan={2}
-                style={!compactSticky ? { left: 648 } : undefined}
+                style={!compactSticky ? { left: 660 } : undefined}
                 className={`${
                   !compactSticky ? headerStickyBase : 'sticky z-30'
-                } top-0 w-[48px] min-w-[48px] max-w-[48px] bg-slate-100 text-slate-800 font-semibold border-b border-r border-slate-300 text-center`}
+                } top-0 w-[54px] min-w-[54px] max-w-[54px] bg-slate-100 text-slate-800 font-semibold border-b border-r border-slate-300 text-center px-1 leading-tight`}
               >
-                狀態
+                <span className="block whitespace-nowrap">任務</span>
+                <span className="block whitespace-nowrap">狀態</span>
               </th>
               <th
                 rowSpan={2}
-                style={!compactSticky ? { left: 696 } : undefined}
+                style={!compactSticky ? { left: 714 } : undefined}
                 className={`${
                   !compactSticky
                     ? `${headerStickyBase} shadow-[2px_0_5px_-2px_rgba(15,23,42,0.18)]`
@@ -918,7 +920,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                         </td>
                       )}
 
-                      {/* Col 5: 完成 Checkbox (rowSpan=2) */}
+                      {/* Col 5: 問題點結案 Checkbox (rowSpan=2) */}
                       <td
                         rowSpan={2}
                         style={!compactSticky ? { left: 412 } : undefined}
@@ -935,7 +937,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                               ? 'hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-slate-900 cursor-pointer'
                               : 'opacity-80 cursor-default'
                           }`}
-                          aria-label={task.completed ? '標記為未完成' : '標記為已完成'}
+                          aria-label={task.completed ? '標記為問題點未結案' : '標記為問題點結案'}
                         >
                           {task.completed ? (
                             <CheckSquare className="w-4 h-4 text-purple-800 fill-purple-100" />
@@ -947,7 +949,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
                       {/* Col 6: 預計開始 */}
                       <td
-                        style={!compactSticky ? { left: 456 } : undefined}
+                        style={!compactSticky ? { left: 468 } : undefined}
                         onClick={() => isEditable && onEditTask(project, task)}
                         className={`${!compactSticky ? stickyBase : ''} ${
                           isOverdueStart
@@ -971,7 +973,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
                       {/* Col 7: 預計結束 */}
                       <td
-                        style={!compactSticky ? { left: 526 } : undefined}
+                        style={!compactSticky ? { left: 538 } : undefined}
                         onClick={() => isEditable && onEditTask(project, task)}
                         className={`${
                           !compactSticky ? stickyBase : ''
@@ -985,7 +987,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
                       {/* Col 8: 預計工作天 */}
                       <td
-                        style={!compactSticky ? { left: 596 } : undefined}
+                        style={!compactSticky ? { left: 608 } : undefined}
                         onClick={() => isEditable && onEditTask(project, task)}
                         className={`${
                           !compactSticky ? stickyBase : ''
@@ -997,10 +999,10 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                         {plannedDays}
                       </td>
 
-                      {/* Col 9: 狀態 (rowSpan=2) */}
+                      {/* Col 9: 任務狀態 (rowSpan=2) */}
                       <td
                         rowSpan={2}
-                        style={!compactSticky ? { left: 648 } : undefined}
+                        style={!compactSticky ? { left: 660 } : undefined}
                         onClick={() => isEditable && onCycleTaskStatus(project.id, task.id)}
                         className={`${!compactSticky ? stickyBase : ''} ${getStatusStyle(
                           task.status
@@ -1009,7 +1011,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
                         } align-middle transition-all`}
                         title={
                           isEditable
-                            ? '點擊切換狀態：O (待結案) → C (已結案) → NA (免評)'
+                            ? '點擊切換任務狀態：O (待結案) → C (已結案) → NA (免評)'
                             : '任務狀態（唯讀）'
                         }
                       >
@@ -1026,7 +1028,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
                       {/* Col 10: 排程 (預計 ▶) */}
                       <td
-                        style={!compactSticky ? { left: 696 } : undefined}
+                        style={!compactSticky ? { left: 714 } : undefined}
                         className={`${
                           !compactSticky
                             ? `${stickyBase} shadow-[2px_0_5px_-2px_rgba(15,23,42,0.18)]`
@@ -1124,7 +1126,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
                       {/* Col 6: 實際開始 */}
                       <td
-                        style={!compactSticky ? { left: 456 } : undefined}
+                        style={!compactSticky ? { left: 468 } : undefined}
                         onClick={() => isEditable && onEditTask(project, task)}
                         className={`${!compactSticky ? stickyBase : ''} ${
                           hasActualActivity
@@ -1144,7 +1146,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
                       {/* Col 7: 實際結束 */}
                       <td
-                        style={!compactSticky ? { left: 526 } : undefined}
+                        style={!compactSticky ? { left: 538 } : undefined}
                         onClick={() => isEditable && onEditTask(project, task)}
                         className={`${!compactSticky ? stickyBase : ''} ${
                           hasActualActivity
@@ -1164,7 +1166,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
                       {/* Col 8: 實際工作天 */}
                       <td
-                        style={!compactSticky ? { left: 596 } : undefined}
+                        style={!compactSticky ? { left: 608 } : undefined}
                         onClick={() => isEditable && onEditTask(project, task)}
                         className={`${!compactSticky ? stickyBase : ''} ${
                           hasActualActivity
@@ -1184,7 +1186,7 @@ export const ScheduleGrid: React.FC<ScheduleGridProps> = ({
 
                       {/* Col 10: 排程 (實際 ▶) */}
                       <td
-                        style={!compactSticky ? { left: 696 } : undefined}
+                        style={!compactSticky ? { left: 714 } : undefined}
                         className={`${
                           !compactSticky
                             ? `${stickyBase} shadow-[2px_0_5px_-2px_rgba(15,23,42,0.18)]`

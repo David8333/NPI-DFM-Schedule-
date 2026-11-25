@@ -481,13 +481,24 @@ function scoreHeaderRow(sheet: ExcelJS.Worksheet, rowIdx: number): number {
       seen.add('model');
       hasModel = true;
     }
-    if (label.includes('任務') || label.toLowerCase().includes('task')) seen.add('task');
+    if ((label.includes('任務') && !label.includes('狀態')) || label.toLowerCase().includes('task')) {
+      seen.add('task');
+    }
     if (label.toUpperCase().includes('PCB')) seen.add('pcb');
-    if (label === '完成' || label.includes('完成')) seen.add('done');
+    if (
+      label === '完成' ||
+      label === '問題點結案' ||
+      label.includes('完成') ||
+      label.includes('問題點結案')
+    ) {
+      seen.add('done');
+    }
     if (label === '開始' || label.includes('開始')) seen.add('start');
     if (label === '結束' || label.includes('結束')) seen.add('end');
     if (label.includes('工作天')) seen.add('days');
-    if (label === '狀態' || label.includes('狀態')) seen.add('status');
+    if (label === '狀態' || label === '任務狀態' || label.includes('狀態')) {
+      seen.add('status');
+    }
     if (label === '排程' || label.includes('排程')) seen.add('schedule');
   }
 
@@ -569,20 +580,43 @@ function detectColumnsAndCalendar(
       if (assignBestCol('seq', c, label === '序號', isHiddenCol)) seqCol = c;
     } else if (label.includes('機種') || lower.includes('model')) {
       if (assignBestCol('model', c, label === '機種名稱', isHiddenCol)) modelCol = c;
+    } else if (label === '狀態' || label === '任務狀態' || label.includes('狀態')) {
+      if (
+        assignBestCol(
+          'status',
+          c,
+          label === '狀態' || label === '任務狀態',
+          isHiddenCol
+        )
+      ) {
+        statusCol = c;
+      }
     } else if (label.includes('任務') || lower.includes('task')) {
       if (assignBestCol('task', c, label === '任務名稱', isHiddenCol)) taskCol = c;
     } else if (label.toUpperCase().includes('PCB')) {
       if (assignBestCol('pcb', c, label.toUpperCase() === 'PCB數量', isHiddenCol)) pcbCol = c;
-    } else if (label === '完成' || label.includes('完成')) {
-      if (assignBestCol('done', c, label === '完成', isHiddenCol)) doneCol = c;
+    } else if (
+      label === '完成' ||
+      label === '問題點結案' ||
+      label.includes('完成') ||
+      label.includes('問題點結案')
+    ) {
+      if (
+        assignBestCol(
+          'done',
+          c,
+          label === '完成' || label === '問題點結案',
+          isHiddenCol
+        )
+      ) {
+        doneCol = c;
+      }
     } else if (label === '開始' || label.includes('開始')) {
       if (assignBestCol('start', c, label === '開始', isHiddenCol)) startCol = c;
     } else if (label === '結束' || label.includes('結束')) {
       if (assignBestCol('end', c, label === '結束', isHiddenCol)) endCol = c;
     } else if (label.includes('工作天')) {
       if (assignBestCol('days', c, label === '工作天', isHiddenCol)) daysCol = c;
-    } else if (label === '狀態' || label.includes('狀態')) {
-      if (assignBestCol('status', c, label === '狀態', isHiddenCol)) statusCol = c;
     } else if (label === '排程' || label.includes('排程')) {
       if (assignBestCol('schedule', c, label === '排程', isHiddenCol)) scheduleCol = c;
     } else if (!eeCol && label.toUpperCase() === 'EE') {
